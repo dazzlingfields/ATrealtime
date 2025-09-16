@@ -1,6 +1,5 @@
 // --- working ---
 const atApiKey = "18e2ee8ee75d4e6ca7bd446ffa9bd50f";
-const atApiKey = "YOUR_API_KEY_HERE"; // replace with your AT key
 const realtimeUrl = "https://api.at.govt.nz/realtime/legacy";
 const routesUrl = "https://api.at.govt.nz/v3/gtfs/routes";
 
@@ -136,4 +135,5 @@ async function fetchVehicles() {
   await fetchVehicles();
   setInterval(fetchVehicles, 30000);
 })();
+
 
