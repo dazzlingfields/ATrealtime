@@ -1,7 +1,7 @@
-// updated 2.6
+// updated 1.12
 const atApiKey = "18e2ee8ee75d4e6ca7bd446ffa9bd50f";
 const realtimeUrl = "https://api.at.govt.nz/realtime/legacy";
-const routesUrl = "https://api.at.govt.nz/gtfs/v3/routes"; // Updated to the correct endpoint base
+const routesUrl = "https://api.at.govt.nz/gtfs/v3/routes"; 
 
 // --- Set up the Map ---
 const map = L.map("map").setView([-36.8485, 174.7633], 13);
@@ -11,7 +11,7 @@ L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
 
 // --- Global Data Stores and UI Elements ---
 const debugBox = document.getElementById("debug");
-const routes = {}; // Cache for static route info, indexed by route_id
+const routes = {}; // Cache for static route info, indexed by route_short_name
 
 // LayerGroups for each vehicle type
 const layerGroups = {
@@ -90,8 +90,11 @@ async function fetchVehicles() {
         // Use Promise.all to fetch route data for all vehicles concurrently
         const routePromises = vehicles.map(v => {
             const routeId = v.vehicle?.trip?.route_id;
-            // The route_id often contains the short name as the second part
-            const routeShortName = routeId ? routeId.split('-')[1] : null;
+            // The route_id often contains the short name, but can also be just a number.
+            // We use a regex to handle both cases gracefully.
+            const routeShortNameMatch = routeId?.match(/([a-zA-Z0-9-]+)/);
+            const routeShortName = routeShortNameMatch ? routeShortNameMatch[1] : null;
+
             return routeShortName ? fetchRouteByShortName(routeShortName) : null;
         });
 
