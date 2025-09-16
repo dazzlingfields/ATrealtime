@@ -76,7 +76,8 @@ async function fetchVehicles() {
             const lon = v.vehicle.position.longitude;
             const trip = v.vehicle.trip || {};
             const routeId = trip.route_id;
-            const routeInfo = routes[routeId];
+            // NEW LINE - Add this
+            const routeInfo = Object.values(routes).find(r => routeId && r.route_short_name && routeId.startsWith(r.route_short_name));
             const routeName = routeInfo
                 ? `${routeInfo.route_short_name || ""} ${routeInfo.route_long_name || ""}`.trim()
                 : "Unknown";
@@ -162,6 +163,7 @@ async function fetchVehicles() {
     await fetchVehicles();
     setInterval(fetchVehicles, 30000);
 })();
+
 
 
 
