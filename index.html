@@ -1,34 +1,36 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Remake of AT Live Map</title>
+    <title>AT Live Map </title> /* V0.1 */
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
     <style>
-        /* CSS for the map */
-        #map { 
-            height: 100vh;
-            width: 100%;
-        }
-        
-        /* CSS for the controls */
-        #controls {
-            position: absolute;
-            top: 10px;
-            left: 10px;
-            z-index: 1000;
-            background-color: rgba(255, 255, 255, 0.8);
-            padding: 10px;
-            border-radius: 5px;
-            font-family: sans-serif;
-            display: flex;
-            flex-direction: column;
-        }
+       <style>
+    /* CSS for the map */
+    #map { 
+        height: 100vh;
+        width: 100%;
+    }
+    
+    /* CSS for the controls */
+    #controls {
+        position: absolute;
+        top: 10px;
+        right: 10px; /* Changed from 'left' to 'right' */
+        z-index: 1000;
+        background-color: rgba(255, 255, 255, 0.8);
+        padding: 10px;
+        border-radius: 5px;
+        font-family: sans-serif;
+        display: flex;
+        flex-direction: column;
+    }
 
-        #controls label {
-            margin-bottom: 5px;
-        }
+    #controls label {
+        margin-bottom: 5px;
+    }
+</style>
     </style>
 </head>
 <body>
@@ -45,3 +47,4 @@
     <script src="script.js"></script>
 </body>
 </html>
+
