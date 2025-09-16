@@ -1,19 +1,34 @@
-// V1.5 updated
+// --- API Key and Endpoints ---
 const atApiKey = "18e2ee8ee75d4e6ca7bd446ffa9bd50f";
 const realtimeUrl = "https://api.at.govt.nz/realtime/legacy";
 const routesUrl = "https://api.at.govt.nz/gtfs/v3/routes";
 const tripsUrl = "https://api.at.govt.nz/gtfs/v3/trips";
+const stopsUrl = "https://api.at.govt.nz/gtfs/v3/trips";
 
 // --- Set up the Map ---
 const map = L.map("map").setView([-36.8485, 174.7633], 13);
-L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-    attribution: "&copy; OpenStreetMap contributors"
-}).addTo(map);
+
+// Define the different base maps
+const baseMaps = {
+    streets: L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        attribution: "&copy; OpenStreetMap contributors"
+    }),
+    satellite: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+        attribution: 'Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community'
+    }),
+    dark: L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
+    })
+};
+
+// Set the default map layer
+baseMaps.streets.addTo(map);
 
 // --- Global Data Stores and UI Elements ---
 const debugBox = document.getElementById("debug");
 const routes = {}; // Cache for static route info, indexed by route_short_name
 const trips = {}; // Cache for static trip info, indexed by trip_id
+const stops = {}; // Cache for stops info, indexed by trip_id
 
 // LayerGroups for each vehicle type
 const layerGroups = {
@@ -23,11 +38,26 @@ const layerGroups = {
     other: L.layerGroup().addTo(map)
 };
 
+// Layer group for stops
+const stopsLayerGroup = L.layerGroup().addTo(map);
+
 // Checkbox handlers to toggle layers
 document.getElementById("bus-checkbox").addEventListener("change", e => toggleLayer("bus", e.target.checked));
 document.getElementById("train-checkbox").addEventListener("change", e => toggleLayer("train", e.target.checked));
 document.getElementById("ferry-checkbox").addEventListener("change", e => toggleLayer("ferry", e.target.checked));
 document.getElementById("other-checkbox").addEventListener("change", e => toggleLayer("other", e.target.checked));
+
+// Base map selector handler
+document.getElementById("base-map-selector").addEventListener("change", e => {
+    // Remove all current layers
+    for (const key in baseMaps) {
+        if (map.hasLayer(baseMaps[key])) {
+            map.removeLayer(baseMaps[key]);
+        }
+    }
+    // Add the new selected layer
+    baseMaps[e.target.value].addTo(map);
+});
 
 function toggleLayer(type, visible) {
     if (visible) map.addLayer(layerGroups[type]);
@@ -97,6 +127,29 @@ async function fetchTripById(tripId) {
     }
 }
 
+async function fetchStopsByTripId(tripId) {
+    if (stops[tripId]) {
+        return stops[tripId];
+    }
+
+    try {
+        const res = await fetch(`${stopsUrl}/${tripId}/stops`, {
+            headers: { "Ocp-Apim-Subscription-Key": atApiKey }
+        });
+        if (!res.ok) {
+            console.error(`Failed to fetch stops for trip ${tripId}: ${res.status} ${res.statusText}`);
+            return null;
+        }
+        const json = await res.json();
+        const stopData = json.data || [];
+        stops[tripId] = stopData;
+        return stopData;
+    } catch (err) {
+        console.error(`Error fetching stops for trip ${tripId}:`, err);
+        return null;
+    }
+}
+
 // --- Main Loop: Fetch and Display Real-time Vehicle Data ---
 async function fetchVehicles() {
     try {
@@ -111,6 +164,7 @@ async function fetchVehicles() {
 
         // Clear previous markers from all layer groups
         Object.values(layerGroups).forEach(group => group.clearLayers());
+        stopsLayerGroup.clearLayers();
         
         const dataPromises = vehicles.map(v => {
             const routeId = v.vehicle?.trip?.route_id;
@@ -122,7 +176,8 @@ async function fetchVehicles() {
 
             return Promise.all([
                 routeShortName ? fetchRouteByShortName(routeShortName) : null,
-                tripId ? fetchTripById(tripId) : null
+                tripId ? fetchTripById(tripId) : null,
+                tripId ? fetchStopsByTripId(tripId) : null
             ]);
         });
 
@@ -136,7 +191,7 @@ async function fetchVehicles() {
             const trip = v.vehicle.trip || {};
             const routeId = trip.route_id;
 
-            const [routeInfo, tripInfo] = results[index];
+            const [routeInfo, tripInfo, stopInfo] = results[index];
             // Extract the route short name for the pop-up
             const routeShortName = (routeId?.match(/^([a-zA-Z0-9]+)/) || [])[1];
 
@@ -159,10 +214,35 @@ async function fetchVehicles() {
             const vehicleId = v.vehicle.vehicle?.label || "N/A";
             const operatorPrefix = (vehicleId !== "N/A") ? vehicleId.match(/^[a-zA-Z]+/) : null;
             const busPrefixes = ["RT", "GB", "PC", "NB", "HE", "TR"];
+            const trainPrefixes = ["AD", "AM"]; // Added for train classification
 
             if (typeKey === "other" && operatorPrefix && busPrefixes.includes(operatorPrefix[0])) {
                 typeKey = "bus";
                 colour = vehicleColors[3];
+            } else if (typeKey === "other" && operatorPrefix && trainPrefixes.includes(operatorPrefix[0])) {
+                typeKey = "train";
+                colour = vehicleColors[2];
+            }
+            
+            // New logic: If there is no route info or destination, consider it "Out of Service"
+            if (!routeInfo || !tripInfo) {
+                routeName = "Out of Service";
+            } else {
+                // Draw stop markers for this trip
+                if (stopInfo) {
+                    stopInfo.forEach(stop => {
+                        const stopMarker = L.circleMarker([stop.attributes.stop_lat, stop.attributes.stop_lon], {
+                            radius: 4,
+                            fillColor: "#6c757d",
+                            color: "#fff",
+                            weight: 1,
+                            opacity: 1,
+                            fillOpacity: 0.7
+                        });
+                        stopMarker.bindPopup(`<b>Stop:</b> ${stop.attributes.stop_name || "N/A"}`);
+                        stopMarker.addTo(stopsLayerGroup);
+                    });
+                }
             }
             
             // Speed conversion and clamping (same logic as before)
