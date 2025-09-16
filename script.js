@@ -1,7 +1,8 @@
-// v1.3 updated
+// --- API Key and Endpoints ---
 const atApiKey = "18e2ee8ee75d4e6ca7bd446ffa9bd50f";
 const realtimeUrl = "https://api.at.govt.nz/realtime/legacy";
-const routesUrl = "https://api.at.govt.nz/gtfs/v3/routes"; 
+const routesUrl = "https://api.at.govt.nz/gtfs/v3/routes";
+const tripsUrl = "https://api.at.govt.nz/gtfs/v3/trips";
 
 // --- Set up the Map ---
 const map = L.map("map").setView([-36.8485, 174.7633], 13);
@@ -12,6 +13,7 @@ L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
 // --- Global Data Stores and UI Elements ---
 const debugBox = document.getElementById("debug");
 const routes = {}; // Cache for static route info, indexed by route_short_name
+const trips = {}; // Cache for static trip info, indexed by trip_id
 
 // LayerGroups for each vehicle type
 const layerGroups = {
@@ -40,9 +42,8 @@ const vehicleColors = {
     default: "#6c757d" // other/unknown
 };
 
-// --- Helper function to fetch a single route by its short name (with caching) ---
+// --- Helper functions for fetching API data with caching ---
 async function fetchRouteByShortName(routeShortName) {
-    // Return cached route if available
     if (routes[routeShortName]) {
         return routes[routeShortName];
     }
@@ -52,22 +53,46 @@ async function fetchRouteByShortName(routeShortName) {
             headers: { "Ocp-Apim-Subscription-Key": atApiKey }
         });
         if (!res.ok) {
-            // Log the error but don't stop the loop
             console.error(`Failed to fetch route ${routeShortName}: ${res.status} ${res.statusText}`);
             return null;
         }
         const json = await res.json();
-        // The v3 endpoint returns an object with a `data` key that is an array
         const routeData = json.data && json.data.length > 0 ? json.data[0].attributes : null;
 
         if (routeData) {
-            // Store the fetched route data in the cache
             routes[routeShortName] = routeData;
             return routeData;
         }
         return null;
     } catch (err) {
         console.error(`Error fetching route ${routeShortName}:`, err);
+        return null;
+    }
+}
+
+async function fetchTripById(tripId) {
+    if (trips[tripId]) {
+        return trips[tripId];
+    }
+
+    try {
+        const res = await fetch(`${tripsUrl}/${tripId}`, {
+            headers: { "Ocp-Apim-Subscription-Key": atApiKey }
+        });
+        if (!res.ok) {
+            console.error(`Failed to fetch trip ${tripId}: ${res.status} ${res.statusText}`);
+            return null;
+        }
+        const json = await res.json();
+        const tripData = json.data ? json.data.attributes : null;
+
+        if (tripData) {
+            trips[tripId] = tripData;
+            return tripData;
+        }
+        return null;
+    } catch (err) {
+        console.error(`Error fetching trip ${tripId}:`, err);
         return null;
     }
 }
@@ -87,18 +112,20 @@ async function fetchVehicles() {
         // Clear previous markers from all layer groups
         Object.values(layerGroups).forEach(group => group.clearLayers());
         
-        // Use Promise.all to fetch route data for all vehicles concurrently
-        const routePromises = vehicles.map(v => {
+        const dataPromises = vehicles.map(v => {
             const routeId = v.vehicle?.trip?.route_id;
-            // The route_id often contains the short name, but can also be just a number.
-            // We use a regex to handle both cases gracefully.
+            const tripId = v.vehicle?.trip?.trip_id;
+
             const routeShortNameMatch = routeId?.match(/([a-zA-Z0-9-]+)/);
             const routeShortName = routeShortNameMatch ? routeShortNameMatch[1] : null;
 
-            return routeShortName ? fetchRouteByShortName(routeShortName) : null;
+            return Promise.all([
+                routeShortName ? fetchRouteByShortName(routeShortName) : null,
+                tripId ? fetchTripById(tripId) : null
+            ]);
         });
 
-        const routeDataArray = await Promise.all(routePromises);
+        const results = await Promise.all(dataPromises);
 
         vehicles.forEach((v, index) => {
             if (!v.vehicle || !v.vehicle.position) return;
@@ -107,9 +134,8 @@ async function fetchVehicles() {
             const lon = v.vehicle.position.longitude;
             const trip = v.vehicle.trip || {};
             const routeId = trip.route_id;
-            const routeInfo = routeDataArray[index];
-            
-            // Extract the route short name for the pop-up
+
+            const [routeInfo, tripInfo] = results[index];
             const routeShortName = (routeId?.match(/([a-zA-Z0-9-]+)/) || [])[1];
 
             let typeKey = "other";
@@ -140,7 +166,6 @@ async function fetchVehicles() {
             const vehicleId = v.vehicle.vehicle?.label || "N/A";
             const operatorPrefix = (vehicleId !== "N/A") ? vehicleId.match(/^[a-zA-Z]+/) : null;
 
-            // Create a custom circle marker with a class for styling
             const marker = L.circleMarker([lat, lon], {
                 radius: 6,
                 fillColor: colour,
@@ -155,6 +180,7 @@ async function fetchVehicles() {
                 <b>Attempted Route Short Name:</b> ${routeShortName || "N/A"}<br>
                 <b>Received Route Type:</b> ${routeInfo?.route_type || "N/A"}<br>
                 <b>Route:</b> ${routeName}<br>
+                <b>Destination:</b> ${tripInfo?.trip_headsign || "N/A"}<br>
                 <b>Operator Prefix:</b> ${operatorPrefix || "N/A"}<br>
                 <b>Vehicle:</b> ${vehicleId}<br>
                 <b>Speed:</b> ${speed}
@@ -172,7 +198,6 @@ async function fetchVehicles() {
 
 // Initialize the application
 (async function init() {
-    // Start the real-time loop immediately
     await fetchVehicles();
     setInterval(fetchVehicles, 30000);
 })();
