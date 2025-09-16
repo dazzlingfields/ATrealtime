@@ -1,38 +1,85 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Remake of AT Live Map</title>
+    <title>AT Realtime Map</title>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <!-- Leaflet CSS -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
+    
     <style>
-        /* CSS for the map */
-        #map { 
-            height: 100vh;
+        body,
+        html,
+        #map {
             width: 100%;
-        }
-        
-        /* CSS for the controls */
-        #controls {
-            position: absolute;
-            top: 10px;
-            left: 10px;
-            z-index: 1000;
-            background-color: rgba(255, 255, 255, 0.8);
-            padding: 10px;
-            border-radius: 5px;
-            font-family: sans-serif;
-            display: flex;
-            flex-direction: column;
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            font-family: Arial, Helvetica, sans-serif;
         }
 
-        #controls label {
-            margin-bottom: 5px;
+        #title {
+            position: absolute;
+            top: 10px;
+            left: 0;
+            right: 0;
+            margin: auto;
+            z-index: 1000;
+            width: 500px;
+            max-width: 90%;
+            text-align: center;
+            color: white;
+            border-radius: 5px;
+            padding: 10px;
+            background-color: rgba(0, 0, 0, 0.8);
+            font-size: 1.5rem;
+            text-shadow: 2px 2px #000000;
+            font-weight: bold;
+        }
+        
+        #map-style-selector {
+            position: absolute;
+            top: 65px;
+            left: 0;
+            right: 0;
+            margin: auto;
+            z-index: 1000;
+            width: 500px;
+            max-width: 90%;
+            text-align: center;
+            padding: 5px;
+            border-radius: 5px;
+            background-color: rgba(0, 0, 0, 0.6);
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+        }
+
+        #map-style-selector button {
+            background-color: #f8f9fa;
+            border: 1px solid #ced4da;
+            padding: 5px 10px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            color: #212529;
+            transition: background-color 0.2s ease;
+        }
+
+        #map-style-selector button:hover {
+            background-color: #e2e6ea;
+        }
+
+        #map-style-selector button.active {
+            background-color: #007bff;
+            color: white;
+            border-color: #007bff;
         }
 
         /* --- Vehicle Dot Styles --- */
         .vehicle-dot {
-            border-radius: 50%; /* Makes it a circle */
+            border-radius: 50%;
             width: 12px;
             height: 12px;
             border: 2px solid #fff;
@@ -44,19 +91,30 @@
         .train-dot { background-color: #dc3545; /* Red */ }
         .ferry-dot { background-color: #ffc107; /* Yellow */ }
         .not-in-service-dot { background-color: #6c757d; /* Grey */ }
+
+        /* Style for the layer controls */
+        .leaflet-control-layers {
+            font-family: Arial, Helvetica, sans-serif;
+            font-size: 14px;
+        }
     </style>
 </head>
 <body>
+    <h1 id="title">AT Realtime Map</h1>
+    <div id="map-style-selector">
+        <button id="streets-btn" class="active">Streets</button>
+        <button id="satellite-btn">Satellite</button>
+        <button id="dark-btn">Dark</button>
+    </div>
     <div id="map"></div>
 
-    <div id="controls">
-        <label><input type="checkbox" id="bus-checkbox" data-vehicle-type="BUS" checked> Buses</label>
-        <label><input type="checkbox" id="train-checkbox" data-vehicle-type="TRAIN" checked> Trains</label>
-        <label><input type="checkbox" id="ferry-checkbox" data-vehicle-type="FERRY" checked> Ferries</label>
-        <label><input type="checkbox" id="not-in-service-checkbox" data-vehicle-type="NOT_IN_SERVICE"> Not in Service</label>
-    </div>
-
+    <!-- Leaflet JS -->
     <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
+    <!-- Esri Leaflet JS -->
+    <script src="https://unpkg.com/esri-leaflet@3.0.4/dist/esri-leaflet.js"></script>
+    <script src="https://unpkg.com/esri-leaflet-vector@4.0.0/dist/esri-leaflet-vector.js"></script>
+    
+    <!-- Your custom script -->
     <script src="script.js"></script>
 </body>
 </html>
