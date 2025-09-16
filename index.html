@@ -37,45 +37,6 @@
             text-shadow: 2px 2px #000000;
             font-weight: bold;
         }
-        
-        #map-style-selector {
-            position: absolute;
-            top: 65px;
-            left: 0;
-            right: 0;
-            margin: auto;
-            z-index: 1000;
-            width: 500px;
-            max-width: 90%;
-            text-align: center;
-            padding: 5px;
-            border-radius: 5px;
-            background-color: rgba(0, 0, 0, 0.6);
-            display: flex;
-            justify-content: center;
-            gap: 10px;
-        }
-
-        #map-style-selector button {
-            background-color: #f8f9fa;
-            border: 1px solid #ced4da;
-            padding: 5px 10px;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 0.9rem;
-            color: #212529;
-            transition: background-color 0.2s ease;
-        }
-
-        #map-style-selector button:hover {
-            background-color: #e2e6ea;
-        }
-
-        #map-style-selector button.active {
-            background-color: #007bff;
-            color: white;
-            border-color: #007bff;
-        }
 
         /* --- Custom Control Panel --- */
         #vehicle-controls {
@@ -123,11 +84,6 @@
 </head>
 <body>
     <h1 id="title">AT Realtime Map</h1>
-    <div id="map-style-selector">
-        <button id="streets-btn" class="active">Streets</button>
-        <button id="satellite-btn">Satellite</button>
-        <button id="dark-btn">Dark</button>
-    </div>
     
     <div id="vehicle-controls">
         <h4>Vehicle Types</h4>
@@ -141,9 +97,6 @@
 
     <!-- Leaflet JS -->
     <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
-    <!-- Esri Leaflet JS -->
-    <script src="https://unpkg.com/esri-leaflet@3.0.4/dist/esri-leaflet.js"></script>
-    <script src="https://unpkg.com/esri-leaflet-vector@4.0.0/dist/esri-leaflet-vector.js"></script>
     
     <!-- Your custom script -->
     <script src="script.js"></script>
