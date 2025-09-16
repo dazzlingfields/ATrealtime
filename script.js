@@ -1,4 +1,4 @@
-// updated 1.12
+// updated 1.13 debugging
 const atApiKey = "18e2ee8ee75d4e6ca7bd446ffa9bd50f";
 const realtimeUrl = "https://api.at.govt.nz/realtime/legacy";
 const routesUrl = "https://api.at.govt.nz/gtfs/v3/routes"; 
@@ -108,6 +108,7 @@ async function fetchVehicles() {
             const trip = v.vehicle.trip || {};
             const routeId = trip.route_id;
             const routeInfo = routeDataArray[index];
+            const routeShortName = (routeId?.match(/([a-zA-Z0-9-]+)/) || [])[1];
 
             let typeKey = "other";
             let colour = vehicleColors.default;
@@ -133,8 +134,9 @@ async function fetchVehicles() {
             }
             const speed = speedKmh !== null ? speedKmh.toFixed(1) + " km/h" : "N/A";
             
-            // License plate
-            const licensePlate = v.vehicle.vehicle?.license_plate || "N/A";
+            // Vehicle label and operator prefix
+            const vehicleId = v.vehicle.vehicle?.label || "N/A";
+            const operatorPrefix = (vehicleId !== "N/A") ? vehicleId.match(/^[a-zA-Z]+/) : null;
 
             // Create a custom circle marker with a class for styling
             const marker = L.circleMarker([lat, lon], {
@@ -147,9 +149,12 @@ async function fetchVehicles() {
             });
 
             marker.bindPopup(`
+                <b>Legacy Route ID:</b> ${routeId || "N/A"}<br>
+                <b>Attempted Route Short Name:</b> ${routeShortName || "N/A"}<br>
+                <b>Received Route Type:</b> ${routeInfo?.route_type || "N/A"}<br>
                 <b>Route:</b> ${routeName}<br>
-                <b>Route ID:</b> ${routeId || "N/A"}<br>
-                <b>License Plate:</b> ${licensePlate}<br>
+                <b>Operator Prefix:</b> ${operatorPrefix || "N/A"}<br>
+                <b>Vehicle:</b> ${vehicleId}<br>
                 <b>Speed:</b> ${speed}
             `);
 
