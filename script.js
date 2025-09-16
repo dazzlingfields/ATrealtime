@@ -1,9 +1,10 @@
-// --- API Key and Endpoints ---
+// v2.15 updated
 const atApiKey = "18e2ee8ee75d4e6ca7bd446ffa9bd50f";
 const realtimeUrl = "https://api.at.govt.nz/realtime/legacy";
 const routesUrl = "https://api.at.govt.nz/gtfs/v3/routes";
 const tripsUrl = "https://api.at.govt.nz/gtfs/v3/trips";
 const stopsUrl = "https://api.at.govt.nz/gtfs/v3/trips";
+const stopUpcomingUrl = "https://api.at.govt.nz/gtfs/v3/stops";
 
 // --- Set up the Map ---
 const map = L.map("map").setView([-36.8485, 174.7633], 13);
@@ -29,6 +30,7 @@ const debugBox = document.getElementById("debug");
 const routes = {}; // Cache for static route info, indexed by route_short_name
 const trips = {}; // Cache for static trip info, indexed by trip_id
 const stops = {}; // Cache for stops info, indexed by trip_id
+const upcomingServicesCache = {}; // Cache for upcoming services by stop ID
 
 // LayerGroups for each vehicle type
 const layerGroups = {
@@ -150,6 +152,34 @@ async function fetchStopsByTripId(tripId) {
     }
 }
 
+async function fetchUpcomingServicesByStopId(stopId) {
+    if (upcomingServicesCache[stopId]) {
+        // Simple cache expiration, clear after 5 minutes
+        const now = new Date().getTime();
+        if (now - upcomingServicesCache[stopId].timestamp < 300000) {
+            return upcomingServicesCache[stopId].data;
+        }
+    }
+
+    try {
+        const res = await fetch(`${stopUpcomingUrl}/${stopId}/upcoming`, {
+            headers: { "Ocp-Apim-Subscription-Key": atApiKey }
+        });
+        if (!res.ok) {
+            console.error(`Failed to fetch upcoming services for stop ${stopId}: ${res.status} ${res.statusText}`);
+            return null;
+        }
+        const json = await res.json();
+        const services = json.data || [];
+        upcomingServicesCache[stopId] = { data: services, timestamp: new Date().getTime() };
+        return services;
+    } catch (err) {
+        console.error(`Error fetching upcoming services for stop ${stopId}:`, err);
+        return null;
+    }
+}
+
+
 // --- Main Loop: Fetch and Display Real-time Vehicle Data ---
 async function fetchVehicles() {
     try {
@@ -199,8 +229,9 @@ async function fetchVehicles() {
             let colour = vehicleColors.default;
             let routeName = "Unknown";
             
-            // First, try to classify based on route type from v3 API
-            if (routeInfo) {
+            // New, more robust logic for vehicle classification and status
+            if (tripInfo && routeInfo) {
+                // Primary classification: Vehicle is in service, use GTFS data
                 const routeType = routeInfo.route_type;
                 switch (routeType) {
                     case 3: typeKey = "bus"; colour = vehicleColors[3]; break;
@@ -208,41 +239,28 @@ async function fetchVehicles() {
                     case 4: typeKey = "ferry"; colour = vehicleColors[4]; break;
                 }
                 routeName = `${routeInfo.route_short_name || ""} ${routeInfo.route_long_name || ""}`.trim();
-            }
-            
-            // Fallback: If route info is unavailable, use operator prefix
-            const vehicleId = v.vehicle.vehicle?.label || "N/A";
-            const operatorPrefix = (vehicleId !== "N/A") ? vehicleId.match(/^[a-zA-Z]+/) : null;
-            const busPrefixes = ["RT", "GB", "PC", "NB", "HE", "TR"];
-            const trainPrefixes = ["AD", "AM"]; // Added for train classification
+                
+            } else if (trip.trip_id) {
+                // Fallback classification: In service but GTFS route data is missing
+                const vehicleId = v.vehicle.vehicle?.label || "N/A";
+                const operatorPrefix = (vehicleId !== "N/A") ? vehicleId.match(/^[a-zA-Z]+/) : null;
+                const busPrefixes = ["RT", "GB", "PC", "NB", "HE", "TR"];
+                const trainPrefixes = ["AD", "AM", "STH", "WST", "EST", "PAPT"]; 
 
-            if (typeKey === "other" && operatorPrefix && busPrefixes.includes(operatorPrefix[0])) {
-                typeKey = "bus";
-                colour = vehicleColors[3];
-            } else if (typeKey === "other" && operatorPrefix && trainPrefixes.includes(operatorPrefix[0])) {
-                typeKey = "train";
-                colour = vehicleColors[2];
-            }
-            
-            // New logic: If there is no route info or destination, consider it "Out of Service"
-            if (!routeInfo || !tripInfo) {
-                routeName = "Out of Service";
-            } else {
-                // Draw stop markers for this trip
-                if (stopInfo) {
-                    stopInfo.forEach(stop => {
-                        const stopMarker = L.circleMarker([stop.attributes.stop_lat, stop.attributes.stop_lon], {
-                            radius: 4,
-                            fillColor: "#6c757d",
-                            color: "#fff",
-                            weight: 1,
-                            opacity: 1,
-                            fillOpacity: 0.7
-                        });
-                        stopMarker.bindPopup(`<b>Stop:</b> ${stop.attributes.stop_name || "N/A"}`);
-                        stopMarker.addTo(stopsLayerGroup);
-                    });
+                if (operatorPrefix && busPrefixes.includes(operatorPrefix[0])) {
+                    typeKey = "bus";
+                    colour = vehicleColors[3];
+                } else if (operatorPrefix && trainPrefixes.includes(operatorPrefix[0])) {
+                    typeKey = "train";
+                    colour = vehicleColors[2];
                 }
+                // The route name will be "Unknown" but the vehicle will be colored correctly.
+                routeName = tripInfo?.trip_headsign || "Unknown";
+
+            } else {
+                // Truly "Out of Service" or unassigned vehicle
+                routeName = "Out of Service";
+                // typeKey remains "other" and colour remains default grey.
             }
             
             // Speed conversion and clamping (same logic as before)
@@ -270,11 +288,65 @@ async function fetchVehicles() {
                 <b>Received Route Type:</b> ${routeInfo?.route_type || "N/A"}<br>
                 <b>Route:</b> ${routeName}<br>
                 <b>Destination:</b> ${tripInfo?.trip_headsign || "N/A"}<br>
-                <b>Vehicle:</b> ${vehicleId}<br>
+                <b>Vehicle:</b> ${v.vehicle.vehicle?.label || "N/A"}<br>
                 <b>Speed:</b> ${speed}
             `);
 
             marker.addTo(layerGroups[typeKey]);
+        });
+        
+        // New section to draw stops and their popups
+        const allStops = new Set();
+        vehicles.forEach(v => {
+            const trip = v.vehicle.trip || {};
+            const stopInfo = stops[trip.trip_id];
+            if (stopInfo) {
+                stopInfo.forEach(stop => allStops.add(stop));
+            }
+        });
+        
+        allStops.forEach(stop => {
+            const stopMarker = L.polygon([
+                [stop.attributes.stop_lat + 0.00003, stop.attributes.stop_lon - 0.00003],
+                [stop.attributes.stop_lat + 0.00003, stop.attributes.stop_lon + 0.00003],
+                [stop.attributes.stop_lat - 0.00003, stop.attributes.stop_lon + 0.00003],
+                [stop.attributes.stop_lat - 0.00003, stop.attributes.stop_lon - 0.00003],
+            ], {
+                fillColor: "#4a4a4a",
+                color: "#fff",
+                weight: 1,
+                opacity: 1,
+                fillOpacity: 0.9
+            });
+
+            stopMarker.on('click', async () => {
+                const stopId = stop.attributes.stop_id;
+                const services = await fetchUpcomingServicesByStopId(stopId);
+                let content = `<b>Stop:</b> ${stop.attributes.stop_name || "N/A"}<hr>`;
+                
+                if (services && services.length > 0) {
+                    content += '<b>Upcoming Services:</b><br>';
+                    const upcoming = services.filter(s => s.attributes.status === "upcoming").slice(0, 3);
+                    upcoming.forEach(s => {
+                        const departureTime = s.attributes.departure_time;
+                        content += `- ${s.attributes.route_short_name || 'Unknown Route'} (${s.attributes.trip_headsign || 'Unknown Destination'}) at ${new Date(departureTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}<br>`;
+                    });
+                    
+                    const departed = services.filter(s => s.attributes.status === "departed").slice(-1);
+                    if (departed.length > 0) {
+                        const lastService = departed[0];
+                        const lastTime = lastService.attributes.departure_time;
+                        content += `<br><b>Last Departed:</b><br>- ${lastService.attributes.route_short_name || 'Unknown Route'} at ${new Date(lastTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+                    }
+
+                } else {
+                    content += 'No upcoming services found.';
+                }
+
+                stopMarker.setPopupContent(content).openPopup();
+            });
+
+            stopMarker.addTo(stopsLayerGroup);
         });
 
         debugBox.textContent = `Last update: ${new Date().toLocaleTimeString()} | Vehicles: ${vehicles.length}`;
