@@ -1,4 +1,4 @@
-// updated 1.13 debugging
+// v1.3 updated
 const atApiKey = "18e2ee8ee75d4e6ca7bd446ffa9bd50f";
 const realtimeUrl = "https://api.at.govt.nz/realtime/legacy";
 const routesUrl = "https://api.at.govt.nz/gtfs/v3/routes"; 
@@ -108,6 +108,8 @@ async function fetchVehicles() {
             const trip = v.vehicle.trip || {};
             const routeId = trip.route_id;
             const routeInfo = routeDataArray[index];
+            
+            // Extract the route short name for the pop-up
             const routeShortName = (routeId?.match(/([a-zA-Z0-9-]+)/) || [])[1];
 
             let typeKey = "other";
