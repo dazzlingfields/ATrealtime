@@ -8,16 +8,10 @@ const routesApiUrl = 'https://api.at.govt.nz/v2/gtfs/routes';
 // --- Set up the Map ---
 const map = L.map('map').setView([-36.8485, 174.7633], 13);
 
-// Define the different Esri basemaps
-const basemaps = {
-    streets: L.esri.Vector.basemap('ArcGIS:Streets'),
-    satellite: L.esri.Vector.basemap('ArcGIS:Imagery'),
-    dark: L.esri.Vector.basemap('ArcGIS:DarkGray')
-};
-
-// Set the initial basemap and add to the map
-let currentBasemap = basemaps.streets;
-currentBasemap.addTo(map);
+// Use OpenStreetMap as the base layer
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+}).addTo(map);
 
 // --- Global Data Stores ---
 const markers = {};
@@ -37,33 +31,6 @@ const layerGroups = {
     [routeTypes.ferry]: L.layerGroup().addTo(map),
     'other': L.layerGroup() // For vehicles without a recognised route
 };
-
-// We are now using a custom control panel, so we remove the default Leaflet control.layers()
-// L.control.layers(null, {
-//     "Buses": layerGroups[routeTypes.bus],
-//     "Trains": layerGroups[routeTypes.train],
-//     "Ferries": layerGroups[routeTypes.ferry],
-//     "Other/Unknown": layerGroups.other
-// }).addTo(map);
-
-// --- Map Style Selector Logic ---
-document.getElementById('streets-btn').addEventListener('click', () => changeMapStyle('streets'));
-document.getElementById('satellite-btn').addEventListener('click', () => changeMapStyle('satellite'));
-document.getElementById('dark-btn').addEventListener('click', () => changeMapStyle('dark'));
-
-function changeMapStyle(styleName) {
-    if (currentBasemap) {
-        map.removeLayer(currentBasemap);
-    }
-    currentBasemap = basemaps[styleName];
-    currentBasemap.addTo(map);
-    
-    // Update active button class
-    document.querySelectorAll('#map-style-selector button').forEach(btn => {
-        btn.classList.remove('active');
-    });
-    document.getElementById(`${styleName}-btn`).classList.add('active');
-}
 
 // --- Custom Checkbox Logic ---
 const checkboxes = {
