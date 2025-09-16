@@ -1,145 +1,103 @@
-// --- API Key and Endpoints ---
-const atApiKey = '18e2ee8ee75d4e6ca7bd446ffa9bd50f';
-const vehicleApiUrl = 'https://api.at.govt.nz/v3/gtfs/vehicles';
-const routesApiUrl = 'https://api.at.govt.nz/v3/gtfs/routes';
+// Replace with your AT API key
+const API_KEY = "YOUR_AT_API_KEY";
 
-// --- Map Setup ---
-const map = L.map('map').setView([-36.8485, 174.7633], 13);
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+// v3 endpoints
+const VEHICLE_API_URL = "https://api.at.govt.nz/v3/public/realtime/vehiclelocations";
+const ROUTES_API_URL = "https://api.at.govt.nz/v3/gtfs/routes";
+
+const map = L.map("map").setView([-36.8485, 174.7633], 13); // Auckland
+
+L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    attribution: "&copy; OpenStreetMap contributors"
 }).addTo(map);
 
-// --- Data Stores ---
-const routes = {};
 const markers = {};
-const routeTypes = { bus: '3', train: '2', ferry: '4' };
+let routesData = {};
 
-// --- Layer Groups ---
-const layerGroups = {
-    [routeTypes.bus]: L.layerGroup().addTo(map),
-    [routeTypes.train]: L.layerGroup().addTo(map),
-    [routeTypes.ferry]: L.layerGroup().addTo(map),
-    'other': L.layerGroup().addTo(map)
-};
-
-// --- Checkbox Controls ---
-const checkboxes = {
-    bus: document.getElementById('bus-checkbox'),
-    train: document.getElementById('train-checkbox'),
-    ferry: document.getElementById('ferry-checkbox'),
-    other: document.getElementById('other-checkbox')
-};
-
-checkboxes.bus.addEventListener('change', e => toggleLayer(routeTypes.bus, e.target.checked));
-checkboxes.train.addEventListener('change', e => toggleLayer(routeTypes.train, e.target.checked));
-checkboxes.ferry.addEventListener('change', e => toggleLayer(routeTypes.ferry, e.target.checked));
-checkboxes.other.addEventListener('change', e => toggleLayer('other', e.target.checked));
-
-function toggleLayer(type, visible) {
-    const layer = layerGroups[type];
-    if (visible) map.addLayer(layer);
-    else map.removeLayer(layer);
-}
-
-// --- Fetch Static Routes ---
-async function fetchStaticRoutes() {
+async function fetchRoutes() {
     try {
-        const response = await fetch(routesApiUrl, {
-            headers: { 'Ocp-Apim-Subscription-Key': atApiKey }
+        const res = await fetch(ROUTES_API_URL, {
+            headers: { "Ocp-Apim-Subscription-Key": API_KEY }
         });
-        if (!response.ok) throw new Error(`Failed to fetch routes: ${response.status}`);
-        const data = await response.json();
-
-        data.forEach(route => {
-            routes[route.route_id] = route;
-        });
-
-        console.log("Static routes fetched:", Object.keys(routes).length);
-
-        // Start vehicle loop
-        fetchVehicleData();
-        setInterval(fetchVehicleData, 10000);
-
-    } catch (error) {
-        console.error("Error fetching static route data:", error);
-        document.getElementById("debug").textContent = "Error fetching routes";
+        if (!res.ok) throw new Error("Failed to fetch routes");
+        const data = await res.json();
+        routesData = data.response.reduce((acc, route) => {
+            acc[route.route_id] = route;
+            return acc;
+        }, {});
+    } catch (err) {
+        console.error("Error fetching routes:", err);
+        document.getElementById("debug").innerText = "Error loading routes";
     }
 }
 
-// --- Fetch Vehicle Data ---
-async function fetchVehicleData() {
+async function fetchVehicles() {
     try {
-        const response = await fetch(vehicleApiUrl, {
-            headers: { 'Ocp-Apim-Subscription-Key': atApiKey }
+        const res = await fetch(VEHICLE_API_URL, {
+            headers: { "Ocp-Apim-Subscription-Key": API_KEY }
         });
-        if (!response.ok) throw new Error(`Failed to fetch vehicles: ${response.status}`);
-        const data = await response.json();
-        const seenIds = new Set();
+        if (!res.ok) throw new Error("Failed to fetch vehicles");
+        const data = await res.json();
 
-        data.forEach(vehicleInfo => {
-            const lat = vehicleInfo.position.latitude;
-            const lng = vehicleInfo.position.longitude;
-            const vehicleId = vehicleInfo.vehicle?.id || vehicleInfo.vehicle?.vehicle_id;
-            if (!vehicleId) return;
+        updateVehicles(data.response.entity || []);
+    } catch (err) {
+        console.error("Error fetching vehicles:", err);
+        document.getElementById("debug").innerText = "Error loading vehicles";
+    }
+}
 
-            const routeId = vehicleInfo.trip?.route_id;
-            const route = routes[routeId];
+function getVehicleType(routeId) {
+    const route = routesData[routeId];
+    if (!route) return "other";
 
-            let dotClass, targetLayer;
-            if (route) {
-                if (route.route_type === routeTypes.bus) { dotClass = 'bus-dot'; targetLayer = layerGroups[routeTypes.bus]; }
-                else if (route.route_type === routeTypes.train) { dotClass = 'train-dot'; targetLayer = layerGroups[routeTypes.train]; }
-                else if (route.route_type === routeTypes.ferry) { dotClass = 'ferry-dot'; targetLayer = layerGroups[routeTypes.ferry]; }
-                else { dotClass = 'not-in-service-dot'; targetLayer = layerGroups.other; }
-            } else {
-                dotClass = 'not-in-service-dot'; targetLayer = layerGroups.other;
-            }
+    switch (route.route_type) {
+        case 3: return "bus";
+        case 2: return "train";
+        case 4: return "ferry";
+        default: return "other";
+    }
+}
 
-            const dotIcon = L.divIcon({ className: `vehicle-dot ${dotClass}` });
-            const speed = vehicleInfo.position.speed ? `${Math.round(vehicleInfo.position.speed * 3.6)} km/h` : 'N/A';
-            const routeName = route ? route.route_long_name : 'Unknown';
-            const headsign = vehicleInfo.trip?.trip_headsign || 'N/A';
+function updateVehicles(vehicles) {
+    const visible = {
+        bus: document.getElementById("bus-checkbox").checked,
+        train: document.getElementById("train-checkbox").checked,
+        ferry: document.getElementById("ferry-checkbox").checked,
+        other: document.getElementById("other-checkbox").checked
+    };
 
-            const popupContent = `
-                <b>Route:</b> ${routeName}<br>
-                <b>Destination:</b> ${headsign}<br>
-                <b>Route ID:</b> ${routeId || 'N/A'}<br>
-                <b>Speed:</b> ${speed}<br>
-                <b>License:</b> ${vehicleInfo.vehicle?.license_plate || 'N/A'}
-            `;
+    vehicles.forEach(entity => {
+        const v = entity.vehicle;
+        if (!v || !v.position) return;
 
-            if (markers[vehicleId]) {
-                markers[vehicleId].setLatLng([lat, lng]);
-                markers[vehicleId].setIcon(dotIcon);
-                markers[vehicleId].getPopup()?.setContent(popupContent);
-            } else {
-                const marker = L.marker([lat, lng], { icon: dotIcon }).bindPopup(popupContent);
-                marker.addTo(targetLayer);
-                markers[vehicleId] = marker;
-            }
+        const id = v.vehicle.id;
+        const lat = v.position.latitude;
+        const lon = v.position.longitude;
+        const type = getVehicleType(v.trip.route_id);
 
-            seenIds.add(vehicleId);
-        });
-
-        // Remove stale vehicles
-        for (const id in markers) {
-            if (!seenIds.has(id)) {
+        if (!visible[type]) {
+            if (markers[id]) {
                 map.removeLayer(markers[id]);
                 delete markers[id];
             }
+            return;
         }
 
-        // --- Debug Panel ---
-        const debug = document.getElementById("debug");
-        debug.textContent = `Last update: ${new Date().toLocaleTimeString()} | Vehicles: ${data.length}`;
-        if (data.length === 0) debug.style.background = "rgba(200,0,0,0.7)";
-        else debug.style.background = "rgba(0,0,0,0.7)";
+        if (!markers[id]) {
+            const dot = L.divIcon({
+                className: "vehicle-dot " + type + "-dot"
+            });
+            markers[id] = L.marker([lat, lon], { icon: dot }).addTo(map);
+        } else {
+            markers[id].setLatLng([lat, lon]);
+        }
+    });
 
-    } catch (error) {
-        console.error("Error fetching vehicle data:", error);
-        document.getElementById("debug").textContent = "Error fetching vehicles";
-    }
+    document.getElementById("debug").innerText = `Vehicles updated: ${vehicles.length}`;
 }
 
-// --- Start ---
-fetchStaticRoutes();
+(async function init() {
+    await fetchRoutes();
+    await fetchVehicles();
+    setInterval(fetchVehicles, 15000); // refresh every 15s
+})();
