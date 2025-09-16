@@ -1,4 +1,4 @@
-//updated V0.1
+// A valid AT API key is required here
 const atApiKey = '18e2ee8ee75d4e6ca7bd446ffa9bd50f';
 
 // The API endpoint for vehicle positions
@@ -56,27 +56,41 @@ async function fetchVehicleData() {
             layerGroups[key].clearLayers();
         }
 
-        // Loop through the data and add markers to the correct layer group
         data.response.entity.forEach(vehicle => {
             const vehicleInfo = vehicle.vehicle;
             const lat = vehicleInfo.position.latitude;
             const lng = vehicleInfo.position.longitude;
-            const vehicleType = vehicleInfo.vehicle.label; // Corrected from `vehicle_type` to `label`
+            const vehicleType = vehicleInfo.vehicle.label;
             const vehicleStatus = vehicleInfo.current_status;
 
             let targetLayer;
+            let dotClass;
 
-            // Determine which layer the vehicle belongs to
+            // Determine which layer and colour the dot should have
             if (vehicleStatus === 'NOT_IN_SERVICE') {
                 targetLayer = layerGroups['NOT_IN_SERVICE'];
-            } else if (vehicleType in layerGroups) {
-                targetLayer = layerGroups[vehicleType];
+                dotClass = 'not-in-service-dot';
+            } else if (vehicleType === 'BUS') {
+                targetLayer = layerGroups['BUS'];
+                dotClass = 'bus-dot';
+            } else if (vehicleType === 'TRAIN') {
+                targetLayer = layerGroups['TRAIN'];
+                dotClass = 'train-dot';
+            } else if (vehicleType === 'FERRY') {
+                targetLayer = layerGroups['FERRY'];
+                dotClass = 'ferry-dot';
             } else {
                 return; // Skip if vehicle type is not recognised
             }
 
+            // Create a custom dot marker
+            const dotIcon = L.divIcon({
+                className: `vehicle-dot ${dotClass}`
+            });
+
             // Create and add the marker to the correct layer
-            const marker = L.marker([lat, lng]).bindPopup(`Type: ${vehicleType}, Status: ${vehicleStatus}`);
+            const marker = L.marker([lat, lng], { icon: dotIcon })
+                .bindPopup(`Type: ${vehicleType}, Status: ${vehicleStatus}`);
             marker.addTo(targetLayer);
         });
 
@@ -91,4 +105,3 @@ updateMapLayers(); // Initial call to show default checked layers
 
 // Refresh data every 30 seconds
 setInterval(fetchVehicleData, 30000);
-
