@@ -1,5 +1,5 @@
-// The atApiKey variable is now loaded from the separate config.js file.
-// const atApiKey = 'YOUR_AT_API_KEY'; // This line is no longer needed
+// --- API Key and Endpoints ---
+const atApiKey = '18e2ee8ee75d4e6ca7bd446ffa9bd50f'; 
 
 // Official AT API endpoints
 const vehicleApiUrl = 'https://api.at.govt.nz/v2/gtfs/vehiclepositions';
