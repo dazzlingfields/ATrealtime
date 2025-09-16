@@ -1,5 +1,5 @@
-//V2
-const atApiKey = '18e2ee8ee75d4e6ca7bd446ffa9bd50f';
+// The atApiKey variable is now loaded from the separate config.js file.
+// const atApiKey = 'YOUR_AT_API_KEY'; // This line is no longer needed
 
 // Official AT API endpoints
 const vehicleApiUrl = 'https://api.at.govt.nz/v2/gtfs/vehiclepositions';
@@ -68,6 +68,7 @@ function changeMapStyle(styleName) {
 
 // --- Initial Data Fetch: Get Static Route Info ---
 async function fetchStaticRoutes() {
+    // We now use the atApiKey variable from the global scope
     try {
         const response = await fetch(routesApiUrl, {
             headers: { 'Ocp-Apim-Subscription-Key': atApiKey }
@@ -96,6 +97,7 @@ async function fetchStaticRoutes() {
 
 // --- Main Loop: Fetch and Display Real-time Vehicle Data ---
 async function fetchVehicleData() {
+    // We now use the atApiKey variable from the global scope
     try {
         const response = await fetch(vehicleApiUrl, {
             headers: { 'Ocp-Apim-Subscription-Key': atApiKey }
