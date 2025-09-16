@@ -22,15 +22,12 @@
             padding: 10px;
             border-radius: 5px;
             font-family: sans-serif;
+            display: flex;
+            flex-direction: column;
         }
 
-        #controls button {
-            padding: 8px 12px;
-            margin: 5px;
-            cursor: pointer;
-            border: 1px solid #ccc;
-            border-radius: 4px;
-            background-color: #f0f0f0;
+        #controls label {
+            margin-bottom: 5px;
         }
     </style>
 </head>
@@ -38,11 +35,10 @@
     <div id="map"></div>
 
     <div id="controls">
-        <button id="show-all">All</button>
-        <button id="show-buses">Buses</button>
-        <button id="show-trains">Trains</button>
-        <button id="show-ferries">Ferries</button>
-        <button id="show-not-in-service">Not in Service</button>
+        <label><input type="checkbox" id="bus-checkbox" data-vehicle-type="BUS" checked> Buses</label>
+        <label><input type="checkbox" id="train-checkbox" data-vehicle-type="TRAIN" checked> Trains</label>
+        <label><input type="checkbox" id="ferry-checkbox" data-vehicle-type="FERRY" checked> Ferries</label>
+        <label><input type="checkbox" id="not-in-service-checkbox" data-vehicle-type="NOT_IN_SERVICE"> Not in Service</label>
     </div>
 
     <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
