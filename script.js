@@ -2,7 +2,7 @@
 const atApiKey = '18e2ee8ee75d4e6ca7bd446ffa9bd50f'; 
 
 // Official AT API endpoints
-const vehicleApiUrl = 'https://api.at.govt.nz/v2/gtfs/vehiclepositions';
+const vehicleApiUrl = 'https://api.at.govt.nz/v2/gtfs-realtime-compat/v1/feed';
 const routesApiUrl = 'https://api.at.govt.nz/v2/gtfs/routes';
 
 // --- Set up the Map ---
@@ -101,60 +101,63 @@ async function fetchVehicleData() {
             layerGroups[key].clearLayers();
         }
 
-        data.response.entity.forEach(vehicle => {
-            const vehicleInfo = vehicle.vehicle;
-            const tripInfo = vehicle.trip;
-            
-            const lat = vehicleInfo.position.latitude;
-            const lng = vehicleInfo.position.longitude;
-            
-            const routeId = tripInfo?.route_id;
-            const route = routes[routeId];
-            
-            let targetLayer;
-            let dotClass;
-            
-            // Check if route data is available and determine vehicle type
-            if (route) {
-                const routeType = route.route_type;
-                if (routeType === routeTypes.bus) {
-                    dotClass = 'bus-dot';
-                    targetLayer = layerGroups[routeTypes.bus];
-                } else if (routeType === routeTypes.train) {
-                    dotClass = 'train-dot';
-                    targetLayer = layerGroups[routeTypes.train];
-                } else if (routeType === routeTypes.ferry) {
-                    dotClass = 'ferry-dot';
-                    targetLayer = layerGroups[routeTypes.ferry];
+        data.entity.forEach(entity => {
+            // Check if the entity is a vehicle position
+            if (entity.vehicle) {
+                const vehicleInfo = entity.vehicle;
+                const tripInfo = vehicleInfo.trip;
+                
+                const lat = vehicleInfo.position.latitude;
+                const lng = vehicleInfo.position.longitude;
+                
+                const routeId = tripInfo?.route_id;
+                const route = routes[routeId];
+                
+                let targetLayer;
+                let dotClass;
+                
+                // Check if route data is available and determine vehicle type
+                if (route) {
+                    const routeType = route.route_type;
+                    if (routeType === routeTypes.bus) {
+                        dotClass = 'bus-dot';
+                        targetLayer = layerGroups[routeTypes.bus];
+                    } else if (routeType === routeTypes.train) {
+                        dotClass = 'train-dot';
+                        targetLayer = layerGroups[routeTypes.train];
+                    } else if (routeType === routeTypes.ferry) {
+                        dotClass = 'ferry-dot';
+                        targetLayer = layerGroups[routeTypes.ferry];
+                    } else {
+                        dotClass = 'not-in-service-dot';
+                        targetLayer = layerGroups.other;
+                    }
                 } else {
+                    // If no route info, assume it's an "other" vehicle
                     dotClass = 'not-in-service-dot';
                     targetLayer = layerGroups.other;
                 }
-            } else {
-                // If no route info, assume it's an "other" vehicle
-                dotClass = 'not-in-service-dot';
-                targetLayer = layerGroups.other;
+    
+                // Create a custom dot marker
+                const dotIcon = L.divIcon({ className: `vehicle-dot ${dotClass}` });
+    
+                // Create a pop-up with all the vehicle details
+                const speed = vehicleInfo.position.speed ? `${Math.round(vehicleInfo.position.speed * 3.6)} km/h` : 'N/A';
+                const routeName = route ? route.route_long_name : 'Unknown';
+    
+                const popupContent = `
+                    <b>Route:</b> ${routeName}<br>
+                    <b>Route ID:</b> ${routeId || 'N/A'}<br>
+                    <b>Speed:</b> ${speed}<br>
+                    <b>License:</b> ${vehicleInfo.vehicle?.license_plate || 'N/A'}
+                `;
+    
+                // Create and add the marker to the correct layer
+                const marker = L.marker([lat, lng], { icon: dotIcon })
+                    .bindPopup(popupContent);
+                
+                marker.addTo(targetLayer);
             }
-
-            // Create a custom dot marker
-            const dotIcon = L.divIcon({ className: `vehicle-dot ${dotClass}` });
-
-            // Create a pop-up with all the vehicle details
-            const speed = vehicleInfo.position.speed ? `${Math.round(vehicleInfo.position.speed * 3.6)} km/h` : 'N/A';
-            const routeName = route ? route.route_long_name : 'Unknown';
-
-            const popupContent = `
-                <b>Route:</b> ${routeName}<br>
-                <b>Route ID:</b> ${routeId || 'N/A'}<br>
-                <b>Speed:</b> ${speed}<br>
-                <b>License:</b> ${vehicleInfo.vehicle?.license_plate || 'N/A'}
-            `;
-
-            // Create and add the marker to the correct layer
-            const marker = L.marker([lat, lng], { icon: dotIcon })
-                .bindPopup(popupContent);
-            
-            marker.addTo(targetLayer);
         });
 
     } catch (error) {
