@@ -2,7 +2,7 @@
 const atApiKey = '18e2ee8ee75d4e6ca7bd446ffa9bd50f';
 
 // The API endpoint for vehicle positions
-const apiUrl = 'https://api.at.govt.nz/v3/gtfs/vehiclepositions';
+const apiUrl = 'https://api.at.govt.nz/v2/gtfs/vehiclepositions';
 
 // --- Set up the Map ---
 const map = L.map('map').setView([-36.8485, 174.7633], 13);
@@ -15,7 +15,7 @@ const layerGroups = {
     'BUS': L.layerGroup().addTo(map),
     'TRAIN': L.layerGroup().addTo(map),
     'FERRY': L.layerGroup().addTo(map),
-    'NOT_IN_SERVICE': L.layerGroup() // Not added by default
+    'NOT_IN_SERVICE': L.layerGroup()
 };
 
 // --- Get the control checkboxes from the HTML ---
@@ -57,27 +57,26 @@ async function fetchVehicleData() {
         }
 
         // Loop through the data and add markers to the correct layer group
-        // NOTE: The property names are based on the AT API documentation.
-        // You can find details on the official dev portal you linked to.
         data.response.entity.forEach(vehicle => {
             const vehicleInfo = vehicle.vehicle;
             const lat = vehicleInfo.position.latitude;
             const lng = vehicleInfo.position.longitude;
-            const type = vehicleInfo.vehicle.vehicle_type;
-            const status = vehicleInfo.current_status;
+            const vehicleType = vehicleInfo.vehicle.label; // Corrected from `vehicle_type` to `label`
+            const vehicleStatus = vehicleInfo.current_status;
+
+            let targetLayer;
 
             // Determine which layer the vehicle belongs to
-            let targetLayer;
-            if (status === 'NOT_IN_SERVICE') {
+            if (vehicleStatus === 'NOT_IN_SERVICE') {
                 targetLayer = layerGroups['NOT_IN_SERVICE'];
-            } else if (type in layerGroups) {
-                targetLayer = layerGroups[type];
+            } else if (vehicleType in layerGroups) {
+                targetLayer = layerGroups[vehicleType];
             } else {
                 return; // Skip if vehicle type is not recognised
             }
 
             // Create and add the marker to the correct layer
-            const marker = L.marker([lat, lng]).bindPopup(`Type: ${type}, Status: ${status}`);
+            const marker = L.marker([lat, lng]).bindPopup(`Type: ${vehicleType}, Status: ${vehicleStatus}`);
             marker.addTo(targetLayer);
         });
 
@@ -92,4 +91,3 @@ updateMapLayers(); // Initial call to show default checked layers
 
 // Refresh data every 30 seconds
 setInterval(fetchVehicleData, 30000);
-
