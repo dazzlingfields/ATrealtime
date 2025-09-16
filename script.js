@@ -1,9 +1,7 @@
-// working v2.4
+// working 2.5
 const atApiKey = "18e2ee8ee75d4e6ca7bd446ffa9bd50f";
-// Using the legacy realtime endpoint for vehicles
 const realtimeUrl = "https://api.at.govt.nz/realtime/legacy";
-// Using the static GTFS route data endpoint to get route types
-const routesUrl = "https://api.at.govt.nz/v3/gtfs/routes";
+const routesUrl = "https://api.at.govt.nz/gtfs/v3/routes";
 
 // --- Set up the Map ---
 const map = L.map("map").setView([-36.8485, 174.7633], 13);
@@ -13,8 +11,7 @@ L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
 
 // --- Global Data Stores and UI Elements ---
 const debugBox = document.getElementById("debug");
-const routes = {}; // Static route info, indexed by route_id
-const vehicleMarkers = {}; // Stores Leaflet markers for updates
+const routes = {}; // Cache for static route info, indexed by route_short_name
 
 // LayerGroups for each vehicle type
 const layerGroups = {
@@ -35,7 +32,7 @@ function toggleLayer(type, visible) {
     else map.removeLayer(layerGroups[type]);
 }
 
-// Vehicle colors based on GTFS route type
+// Vehicle colours based on GTFS route type
 const vehicleColors = {
     3: "#007bff", // bus
     2: "#dc3545", // train
@@ -43,25 +40,35 @@ const vehicleColors = {
     default: "#6c757d" // other/unknown
 };
 
-// --- Initial Data Fetch: Get Static Route Info ---
-async function fetchRoutes() {
+// --- Helper function to fetch a single route by its short name (with caching) ---
+async function fetchRouteByShortName(routeShortName) {
+    // Return cached route if available
+    if (routes[routeShortName]) {
+        return routes[routeShortName];
+    }
+    
     try {
-        const res = await fetch(routesUrl, {
+        const res = await fetch(`${routesUrl}?filter[route_short_name]=${routeShortName}`, {
             headers: { "Ocp-Apim-Subscription-Key": atApiKey }
         });
         if (!res.ok) {
-            throw new Error(`Failed to fetch static routes: ${res.status} ${res.statusText}`);
+            // Log the error but don't stop the loop
+            console.error(`Failed to fetch route ${routeShortName}: ${res.status} ${res.statusText}`);
+            return null;
         }
         const json = await res.json();
-        // The v3 endpoint returns an object with a `data` key
-        json.data.forEach(route => {
-            // Index routes by their route_id for easy lookup
-            routes[route.id] = route.attributes;
-        });
-        console.log("Static routes loaded:", Object.keys(routes).length);
+        // The v3 endpoint returns an object with a `data` key that is an array
+        const routeData = json.data && json.data.length > 0 ? json.data[0].attributes : null;
+
+        if (routeData) {
+            // Store the fetched route data in the cache
+            routes[routeShortName] = routeData;
+            return routeData;
+        }
+        return null;
     } catch (err) {
-        console.error("Error fetching static routes:", err);
-        debugBox.textContent = `Error loading routes: ${err.message}`;
+        console.error(`Error fetching route ${routeShortName}:`, err);
+        return null;
     }
 }
 
@@ -75,32 +82,40 @@ async function fetchVehicles() {
             throw new Error(`Failed to fetch vehicles: ${res.status} ${res.statusText}`);
         }
         const json = await res.json();
-        // The legacy endpoint returns an object with a `response` key
         const vehicles = json.response.entity || [];
 
         // Clear previous markers from all layer groups
         Object.values(layerGroups).forEach(group => group.clearLayers());
+        
+        // Use Promise.all to fetch route data for all vehicles concurrently
+        const routePromises = vehicles.map(v => {
+            const routeId = v.vehicle?.trip?.route_id;
+            // The route_id often contains the short name as the second part
+            const routeShortName = routeId ? routeId.split('-')[1] : null;
+            return routeShortName ? fetchRouteByShortName(routeShortName) : null;
+        });
 
-        vehicles.forEach(v => {
+        const routeDataArray = await Promise.all(routePromises);
+
+        vehicles.forEach((v, index) => {
             if (!v.vehicle || !v.vehicle.position) return;
 
             const lat = v.vehicle.position.latitude;
             const lon = v.vehicle.position.longitude;
             const trip = v.vehicle.trip || {};
             const routeId = trip.route_id;
+            const routeInfo = routeDataArray[index];
 
             let typeKey = "other";
-            let color = vehicleColors.default;
-            let routeInfo = routes[routeId];
+            let colour = vehicleColors.default;
             let routeName = "Unknown";
-
+            
             if (routeInfo) {
-                // Use route_type from the static data lookup
                 const routeType = routeInfo.route_type;
                 switch (routeType) {
-                    case 3: typeKey = "bus"; color = vehicleColors[3]; break;
-                    case 2: typeKey = "train"; color = vehicleColors[2]; break;
-                    case 4: typeKey = "ferry"; color = vehicleColors[4]; break;
+                    case 3: typeKey = "bus"; colour = vehicleColors[3]; break;
+                    case 2: typeKey = "train"; colour = vehicleColors[2]; break;
+                    case 4: typeKey = "ferry"; colour = vehicleColors[4]; break;
                 }
                 routeName = `${routeInfo.route_short_name || ""} ${routeInfo.route_long_name || ""}`.trim();
             }
@@ -121,7 +136,7 @@ async function fetchVehicles() {
             // Create a custom circle marker with a class for styling
             const marker = L.circleMarker([lat, lon], {
                 radius: 6,
-                fillColor: color,
+                fillColor: colour,
                 color: "#fff",
                 weight: 1,
                 opacity: 1,
@@ -147,8 +162,7 @@ async function fetchVehicles() {
 
 // Initialize the application
 (async function init() {
-    await fetchRoutes();
-    // Fetch vehicles immediately and then every 30 seconds
+    // Start the real-time loop immediately
     await fetchVehicles();
     setInterval(fetchVehicles, 30000);
 })();
