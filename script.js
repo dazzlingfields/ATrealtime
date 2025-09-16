@@ -38,13 +38,13 @@ const layerGroups = {
     'other': L.layerGroup() // For vehicles without a recognised route
 };
 
-// Add a Layer Control to the map for toggling layers
-L.control.layers(null, {
-    "Buses": layerGroups[routeTypes.bus],
-    "Trains": layerGroups[routeTypes.train],
-    "Ferries": layerGroups[routeTypes.ferry],
-    "Other/Unknown": layerGroups.other
-}).addTo(map);
+// We are now using a custom control panel, so we remove the default Leaflet control.layers()
+// L.control.layers(null, {
+//     "Buses": layerGroups[routeTypes.bus],
+//     "Trains": layerGroups[routeTypes.train],
+//     "Ferries": layerGroups[routeTypes.ferry],
+//     "Other/Unknown": layerGroups.other
+// }).addTo(map);
 
 // --- Map Style Selector Logic ---
 document.getElementById('streets-btn').addEventListener('click', () => changeMapStyle('streets'));
@@ -63,6 +63,28 @@ function changeMapStyle(styleName) {
         btn.classList.remove('active');
     });
     document.getElementById(`${styleName}-btn`).classList.add('active');
+}
+
+// --- Custom Checkbox Logic ---
+const checkboxes = {
+    bus: document.getElementById('bus-checkbox'),
+    train: document.getElementById('train-checkbox'),
+    ferry: document.getElementById('ferry-checkbox'),
+    other: document.getElementById('other-checkbox')
+};
+
+checkboxes.bus.addEventListener('change', (e) => toggleLayer(routeTypes.bus, e.target.checked));
+checkboxes.train.addEventListener('change', (e) => toggleLayer(routeTypes.train, e.target.checked));
+checkboxes.ferry.addEventListener('change', (e) => toggleLayer(routeTypes.ferry, e.target.checked));
+checkboxes.other.addEventListener('change', (e) => toggleLayer('other', e.target.checked));
+
+function toggleLayer(type, isVisible) {
+    const layer = layerGroups[type];
+    if (isVisible) {
+        map.addLayer(layer);
+    } else {
+        map.removeLayer(layer);
+    }
 }
 
 
@@ -107,7 +129,7 @@ async function fetchVehicleData() {
         }
         const data = await response.json();
 
-        // Remove all markers to redraw the map with new positions
+        // Clear existing markers from all layer groups
         for (const key in layerGroups) {
             layerGroups[key].clearLayers();
         }
