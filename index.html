@@ -77,6 +77,34 @@
             border-color: #007bff;
         }
 
+        /* --- Custom Control Panel --- */
+        #vehicle-controls {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            z-index: 1000;
+            background-color: rgba(0, 0, 0, 0.6);
+            color: white;
+            padding: 15px;
+            border-radius: 8px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        #vehicle-controls h4 {
+            margin: 0 0 5px 0;
+            padding-bottom: 5px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.3);
+        }
+        
+        #vehicle-controls label {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            cursor: pointer;
+        }
+
         /* --- Vehicle Dot Styles --- */
         .vehicle-dot {
             border-radius: 50%;
@@ -91,12 +119,6 @@
         .train-dot { background-color: #dc3545; /* Red */ }
         .ferry-dot { background-color: #ffc107; /* Yellow */ }
         .not-in-service-dot { background-color: #6c757d; /* Grey */ }
-
-        /* Style for the layer controls */
-        .leaflet-control-layers {
-            font-family: Arial, Helvetica, sans-serif;
-            font-size: 14px;
-        }
     </style>
 </head>
 <body>
@@ -106,6 +128,15 @@
         <button id="satellite-btn">Satellite</button>
         <button id="dark-btn">Dark</button>
     </div>
+    
+    <div id="vehicle-controls">
+        <h4>Vehicle Types</h4>
+        <label><input type="checkbox" id="bus-checkbox" checked> Buses</label>
+        <label><input type="checkbox" id="train-checkbox" checked> Trains</label>
+        <label><input type="checkbox" id="ferry-checkbox" checked> Ferries</label>
+        <label><input type="checkbox" id="other-checkbox" checked> Other/Unknown</label>
+    </div>
+
     <div id="map"></div>
 
     <!-- Leaflet JS -->
