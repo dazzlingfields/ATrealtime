@@ -2,7 +2,7 @@
 const atApiKey = '18e2ee8ee75d4e6ca7bd446ffa9bd50f';
 
 // The API endpoint for vehicle positions
-const apiUrl = 'https://api.at.govt.nz/v2/gtfs/vehiclepositions';
+const apiUrl = 'https://api.at.govt.nz/v3/gtfs/vehiclepositions';
 
 // --- Set up the Map ---
 const map = L.map('map').setView([-36.8485, 174.7633], 13);
@@ -92,3 +92,4 @@ updateMapLayers(); // Initial call to show default checked layers
 
 // Refresh data every 30 seconds
 setInterval(fetchVehicleData, 30000);
+
