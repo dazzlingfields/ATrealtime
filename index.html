@@ -7,11 +7,43 @@
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
     <style>
         /* CSS for the map */
-        #map { height: 100vh; }
+        #map { 
+            height: 100vh;
+            width: 100%;
+        }
+        
+        /* CSS for the controls */
+        #controls {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            z-index: 1000;
+            background-color: rgba(255, 255, 255, 0.8);
+            padding: 10px;
+            border-radius: 5px;
+            font-family: sans-serif;
+        }
+
+        #controls button {
+            padding: 8px 12px;
+            margin: 5px;
+            cursor: pointer;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            background-color: #f0f0f0;
+        }
     </style>
 </head>
 <body>
     <div id="map"></div>
+
+    <div id="controls">
+        <button id="show-all">All</button>
+        <button id="show-buses">Buses</button>
+        <button id="show-trains">Trains</button>
+        <button id="show-ferries">Ferries</button>
+        <button id="show-not-in-service">Not in Service</button>
+    </div>
 
     <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
     <script src="script.js"></script>
