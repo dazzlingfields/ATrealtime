@@ -1,5 +1,6 @@
 // --- working ---
 const atApiKey = "18e2ee8ee75d4e6ca7bd446ffa9bd50f";
+// v2.3
 const realtimeUrl = "https://api.at.govt.nz/realtime/legacy";
 const routesUrl = "https://api.at.govt.nz/v3/gtfs/routes";
 
@@ -81,9 +82,6 @@ async function fetchVehicles() {
                 : "Unknown";
 
             const licensePlate = v.vehicle.vehicle.license_plate || "N/A";
-            const speed = v.vehicle.position.speed
-                ? (v.vehicle.position.speed * 3.6).toFixed(1) + " km/h"
-                : "N/A";
 
             // Operator code
             const operator = v.vehicle.vehicle.operator_code || "";
@@ -107,6 +105,27 @@ async function fetchVehicles() {
                     case 4: typeKey = "ferry"; color = vehicleColors[4]; break;
                 }
             }
+
+            // Speed conversion and clamping
+            let speedKmh = v.vehicle.position.speed ? v.vehicle.position.speed * 3.6 : null;
+
+            if (speedKmh !== null) {
+                switch (typeKey) {
+                    case "bus":
+                        if (speedKmh < 0 || speedKmh > 100) speedKmh = null;
+                        break;
+                    case "train":
+                        if (speedKmh < 0 || speedKmh > 120) speedKmh = null;
+                        break;
+                    case "ferry":
+                        if (speedKmh < 0 || speedKmh > 60) speedKmh = null;
+                        break;
+                    default:
+                        if (speedKmh < 0 || speedKmh > 160) speedKmh = null;
+                }
+            }
+
+            const speed = speedKmh !== null ? speedKmh.toFixed(1) + " km/h" : "N/A";
 
             // Create marker
             const marker = L.circleMarker([lat, lon], {
@@ -143,6 +162,7 @@ async function fetchVehicles() {
     await fetchVehicles();
     setInterval(fetchVehicles, 30000);
 })();
+
 
 
 
