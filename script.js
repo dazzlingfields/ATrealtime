@@ -1,4 +1,4 @@
-// A valid AT API key is required here
+//updated V0.1
 const atApiKey = '18e2ee8ee75d4e6ca7bd446ffa9bd50f';
 
 // The API endpoint for vehicle positions
@@ -91,3 +91,4 @@ updateMapLayers(); // Initial call to show default checked layers
 
 // Refresh data every 30 seconds
 setInterval(fetchVehicleData, 30000);
+
