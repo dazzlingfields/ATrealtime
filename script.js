@@ -1,4 +1,4 @@
-// --- API Key and Endpoints ---
+//v1.4 updated
 const atApiKey = "18e2ee8ee75d4e6ca7bd446ffa9bd50f";
 const realtimeUrl = "https://api.at.govt.nz/realtime/legacy";
 const routesUrl = "https://api.at.govt.nz/gtfs/v3/routes";
@@ -201,3 +201,4 @@ async function fetchVehicles() {
     await fetchVehicles();
     setInterval(fetchVehicles, 30000);
 })();
+
