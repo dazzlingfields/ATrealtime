@@ -1,4 +1,4 @@
-//v1.4 updated
+// V1.5 updated
 const atApiKey = "18e2ee8ee75d4e6ca7bd446ffa9bd50f";
 const realtimeUrl = "https://api.at.govt.nz/realtime/legacy";
 const routesUrl = "https://api.at.govt.nz/gtfs/v3/routes";
@@ -116,7 +116,8 @@ async function fetchVehicles() {
             const routeId = v.vehicle?.trip?.route_id;
             const tripId = v.vehicle?.trip?.trip_id;
 
-            const routeShortNameMatch = routeId?.match(/([a-zA-Z0-9-]+)/);
+            // Robust logic to extract route short name
+            const routeShortNameMatch = routeId?.match(/^([a-zA-Z0-9]+)/);
             const routeShortName = routeShortNameMatch ? routeShortNameMatch[1] : null;
 
             return Promise.all([
@@ -136,12 +137,14 @@ async function fetchVehicles() {
             const routeId = trip.route_id;
 
             const [routeInfo, tripInfo] = results[index];
-            const routeShortName = (routeId?.match(/([a-zA-Z0-9-]+)/) || [])[1];
+            // Extract the route short name for the pop-up
+            const routeShortName = (routeId?.match(/^([a-zA-Z0-9]+)/) || [])[1];
 
             let typeKey = "other";
             let colour = vehicleColors.default;
             let routeName = "Unknown";
             
+            // First, try to classify based on route type from v3 API
             if (routeInfo) {
                 const routeType = routeInfo.route_type;
                 switch (routeType) {
@@ -150,6 +153,16 @@ async function fetchVehicles() {
                     case 4: typeKey = "ferry"; colour = vehicleColors[4]; break;
                 }
                 routeName = `${routeInfo.route_short_name || ""} ${routeInfo.route_long_name || ""}`.trim();
+            }
+            
+            // Fallback: If route info is unavailable, use operator prefix
+            const vehicleId = v.vehicle.vehicle?.label || "N/A";
+            const operatorPrefix = (vehicleId !== "N/A") ? vehicleId.match(/^[a-zA-Z]+/) : null;
+            const busPrefixes = ["RT", "GB", "PC", "NB", "HE", "TR"];
+
+            if (typeKey === "other" && operatorPrefix && busPrefixes.includes(operatorPrefix[0])) {
+                typeKey = "bus";
+                colour = vehicleColors[3];
             }
             
             // Speed conversion and clamping (same logic as before)
@@ -162,10 +175,6 @@ async function fetchVehicles() {
             }
             const speed = speedKmh !== null ? speedKmh.toFixed(1) + " km/h" : "N/A";
             
-            // Vehicle label and operator prefix
-            const vehicleId = v.vehicle.vehicle?.label || "N/A";
-            const operatorPrefix = (vehicleId !== "N/A") ? vehicleId.match(/^[a-zA-Z]+/) : null;
-
             const marker = L.circleMarker([lat, lon], {
                 radius: 6,
                 fillColor: colour,
@@ -181,7 +190,6 @@ async function fetchVehicles() {
                 <b>Received Route Type:</b> ${routeInfo?.route_type || "N/A"}<br>
                 <b>Route:</b> ${routeName}<br>
                 <b>Destination:</b> ${tripInfo?.trip_headsign || "N/A"}<br>
-                <b>Operator Prefix:</b> ${operatorPrefix || "N/A"}<br>
                 <b>Vehicle:</b> ${vehicleId}<br>
                 <b>Speed:</b> ${speed}
             `);
@@ -201,4 +209,3 @@ async function fetchVehicles() {
     await fetchVehicles();
     setInterval(fetchVehicles, 30000);
 })();
-
