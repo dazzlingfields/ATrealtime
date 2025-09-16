@@ -1,108 +1,175 @@
-// v1
+//V2
 const atApiKey = '18e2ee8ee75d4e6ca7bd446ffa9bd50f';
 
-// The API endpoint for vehicle positions
-const apiUrl = 'https://api.at.govt.nz/v2/gtfs/vehiclepositions';
+// Official AT API endpoints
+const vehicleApiUrl = 'https://api.at.govt.nz/v2/gtfs/vehiclepositions';
+const routesApiUrl = 'https://api.at.govt.nz/v2/gtfs/routes';
 
 // --- Set up the Map ---
 const map = L.map('map').setView([-36.8485, 174.7633], 13);
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    attribution: '© OpenStreetMap contributors'
-}).addTo(map);
+
+// Define the different Esri basemaps
+const basemaps = {
+    streets: L.esri.Vector.basemap('ArcGIS:Streets'),
+    satellite: L.esri.Vector.basemap('ArcGIS:Imagery'),
+    dark: L.esri.Vector.basemap('ArcGIS:DarkGray')
+};
+
+// Set the initial basemap and add to the map
+let currentBasemap = basemaps.streets;
+currentBasemap.addTo(map);
+
+// --- Global Data Stores ---
+const markers = {};
+const routes = {};
+
+// GTFS route_type values for each mode
+const routeTypes = {
+    bus: '3',
+    train: '2',
+    ferry: '4'
+};
 
 // --- Create Layer Groups for each vehicle type ---
 const layerGroups = {
-    'BUS': L.layerGroup().addTo(map),
-    'TRAIN': L.layerGroup().addTo(map),
-    'FERRY': L.layerGroup().addTo(map),
-    'NOT_IN_SERVICE': L.layerGroup()
+    [routeTypes.bus]: L.layerGroup().addTo(map),
+    [routeTypes.train]: L.layerGroup().addTo(map),
+    [routeTypes.ferry]: L.layerGroup().addTo(map),
+    'other': L.layerGroup() // For vehicles without a recognised route
 };
 
-// --- Get the control checkboxes from the HTML ---
-const checkboxes = document.querySelectorAll('#controls input[type="checkbox"]');
+// Add a Layer Control to the map for toggling layers
+L.control.layers(null, {
+    "Buses": layerGroups[routeTypes.bus],
+    "Trains": layerGroups[routeTypes.train],
+    "Ferries": layerGroups[routeTypes.ferry],
+    "Other/Unknown": layerGroups.other
+}).addTo(map);
 
-// --- Add event listeners to each checkbox ---
-checkboxes.forEach(checkbox => {
-    checkbox.addEventListener('change', updateMapLayers);
-});
+// --- Map Style Selector Logic ---
+document.getElementById('streets-btn').addEventListener('click', () => changeMapStyle('streets'));
+document.getElementById('satellite-btn').addEventListener('click', () => changeMapStyle('satellite'));
+document.getElementById('dark-btn').addEventListener('click', () => changeMapStyle('dark'));
 
-// --- Function to update layers based on checkbox state ---
-function updateMapLayers() {
-    for (const key in layerGroups) {
-        const checkbox = document.querySelector(`input[data-vehicle-type="${key}"]`);
-        if (checkbox && checkbox.checked) {
-            map.addLayer(layerGroups[key]);
-        } else {
-            map.removeLayer(layerGroups[key]);
+function changeMapStyle(styleName) {
+    if (currentBasemap) {
+        map.removeLayer(currentBasemap);
+    }
+    currentBasemap = basemaps[styleName];
+    currentBasemap.addTo(map);
+    
+    // Update active button class
+    document.querySelectorAll('#map-style-selector button').forEach(btn => {
+        btn.classList.remove('active');
+    });
+    document.getElementById(`${styleName}-btn`).classList.add('active');
+}
+
+
+// --- Initial Data Fetch: Get Static Route Info ---
+async function fetchStaticRoutes() {
+    try {
+        const response = await fetch(routesApiUrl, {
+            headers: { 'Ocp-Apim-Subscription-Key': atApiKey }
+        });
+        if (!response.ok) {
+            throw new Error(`Failed to fetch routes: ${response.status}`);
         }
+        const data = await response.json();
+        
+        // Store route data in the global 'routes' object for quick lookup
+        data.response.forEach(route => {
+            routes[route.route_id] = route;
+        });
+
+        console.log("Static routes fetched:", Object.keys(routes).length);
+        
+        // Once static data is loaded, start the real-time loop
+        fetchVehicleData();
+        setInterval(fetchVehicleData, 30000);
+
+    } catch (error) {
+        console.error("Error fetching static route data:", error);
     }
 }
 
-// --- Fetch and Display Vehicle Data ---
+
+// --- Main Loop: Fetch and Display Real-time Vehicle Data ---
 async function fetchVehicleData() {
     try {
-        const response = await fetch(apiUrl, {
+        const response = await fetch(vehicleApiUrl, {
             headers: { 'Ocp-Apim-Subscription-Key': atApiKey }
         });
-
         if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
+            throw new Error(`Failed to fetch vehicles: ${response.status}`);
         }
-
         const data = await response.json();
 
-        // Clear all existing markers from all layer groups
+        // Remove all markers to redraw the map with new positions
         for (const key in layerGroups) {
             layerGroups[key].clearLayers();
         }
 
         data.response.entity.forEach(vehicle => {
             const vehicleInfo = vehicle.vehicle;
+            const tripInfo = vehicle.trip;
+            
             const lat = vehicleInfo.position.latitude;
             const lng = vehicleInfo.position.longitude;
-            const vehicleType = vehicleInfo.vehicle.label;
-            const vehicleStatus = vehicleInfo.current_status;
-
+            
+            const routeId = tripInfo?.route_id;
+            const route = routes[routeId];
+            
             let targetLayer;
             let dotClass;
-
-            // Determine which layer and colour the dot should have
-            if (vehicleStatus === 'NOT_IN_SERVICE') {
-                targetLayer = layerGroups['NOT_IN_SERVICE'];
-                dotClass = 'not-in-service-dot';
-            } else if (vehicleType === 'BUS') {
-                targetLayer = layerGroups['BUS'];
-                dotClass = 'bus-dot';
-            } else if (vehicleType === 'TRAIN') {
-                targetLayer = layerGroups['TRAIN'];
-                dotClass = 'train-dot';
-            } else if (vehicleType === 'FERRY') {
-                targetLayer = layerGroups['FERRY'];
-                dotClass = 'ferry-dot';
+            
+            // Check if route data is available and determine vehicle type
+            if (route) {
+                const routeType = route.route_type;
+                if (routeType === routeTypes.bus) {
+                    dotClass = 'bus-dot';
+                    targetLayer = layerGroups[routeTypes.bus];
+                } else if (routeType === routeTypes.train) {
+                    dotClass = 'train-dot';
+                    targetLayer = layerGroups[routeTypes.train];
+                } else if (routeType === routeTypes.ferry) {
+                    dotClass = 'ferry-dot';
+                    targetLayer = layerGroups[routeTypes.ferry];
+                } else {
+                    dotClass = 'not-in-service-dot';
+                    targetLayer = layerGroups.other;
+                }
             } else {
-                return; // Skip if vehicle type is not recognised
+                // If no route info, assume it's an "other" vehicle
+                dotClass = 'not-in-service-dot';
+                targetLayer = layerGroups.other;
             }
 
             // Create a custom dot marker
-            const dotIcon = L.divIcon({
-                className: `vehicle-dot ${dotClass}`
-            });
+            const dotIcon = L.divIcon({ className: `vehicle-dot ${dotClass}` });
+
+            // Create a pop-up with all the vehicle details
+            const speed = vehicleInfo.position.speed ? `${Math.round(vehicleInfo.position.speed * 3.6)} km/h` : 'N/A';
+            const routeName = route ? route.route_long_name : 'Unknown';
+
+            const popupContent = `
+                <b>Route:</b> ${routeName}<br>
+                <b>Route ID:</b> ${routeId || 'N/A'}<br>
+                <b>Speed:</b> ${speed}<br>
+                <b>License:</b> ${vehicleInfo.vehicle?.license_plate || 'N/A'}
+            `;
 
             // Create and add the marker to the correct layer
             const marker = L.marker([lat, lng], { icon: dotIcon })
-                .bindPopup(`Type: ${vehicleType}, Status: ${vehicleStatus}`);
+                .bindPopup(popupContent);
+            
             marker.addTo(targetLayer);
         });
 
     } catch (error) {
-        console.error("Failed to fetch vehicle data:", error);
+        console.error("Error fetching vehicle data:", error);
     }
 }
 
-// Fetch data on page load
-fetchVehicleData();
-updateMapLayers(); // Initial call to show default checked layers
-
-// Refresh data every 30 seconds
-setInterval(fetchVehicleData, 30000);
-
+// Start the process by fetching static routes first
+fetchStaticRoutes();
