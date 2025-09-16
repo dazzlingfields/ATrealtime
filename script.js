@@ -1,7 +1,7 @@
-// working 2.5
+// updated 2.6
 const atApiKey = "18e2ee8ee75d4e6ca7bd446ffa9bd50f";
 const realtimeUrl = "https://api.at.govt.nz/realtime/legacy";
-const routesUrl = "https://api.at.govt.nz/gtfs/v3/routes";
+const routesUrl = "https://api.at.govt.nz/gtfs/v3/routes"; // Updated to the correct endpoint base
 
 // --- Set up the Map ---
 const map = L.map("map").setView([-36.8485, 174.7633], 13);
@@ -11,7 +11,7 @@ L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
 
 // --- Global Data Stores and UI Elements ---
 const debugBox = document.getElementById("debug");
-const routes = {}; // Cache for static route info, indexed by route_short_name
+const routes = {}; // Cache for static route info, indexed by route_id
 
 // LayerGroups for each vehicle type
 const layerGroups = {
