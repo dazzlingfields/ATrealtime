@@ -1,17 +1,20 @@
-// --- working ---
+// working v2.4
 const atApiKey = "18e2ee8ee75d4e6ca7bd446ffa9bd50f";
-// v2.3
+// Using the legacy realtime endpoint for vehicles
 const realtimeUrl = "https://api.at.govt.nz/realtime/legacy";
+// Using the static GTFS route data endpoint to get route types
 const routesUrl = "https://api.at.govt.nz/v3/gtfs/routes";
 
+// --- Set up the Map ---
 const map = L.map("map").setView([-36.8485, 174.7633], 13);
 L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
     attribution: "&copy; OpenStreetMap contributors"
 }).addTo(map);
 
+// --- Global Data Stores and UI Elements ---
 const debugBox = document.getElementById("debug");
-const routes = {}; // Static route info
-const vehicleMarkers = {};
+const routes = {}; // Static route info, indexed by route_id
+const vehicleMarkers = {}; // Stores Leaflet markers for updates
 
 // LayerGroups for each vehicle type
 const layerGroups = {
@@ -21,7 +24,7 @@ const layerGroups = {
     other: L.layerGroup().addTo(map)
 };
 
-// Checkbox handlers
+// Checkbox handlers to toggle layers
 document.getElementById("bus-checkbox").addEventListener("change", e => toggleLayer("bus", e.target.checked));
 document.getElementById("train-checkbox").addEventListener("change", e => toggleLayer("train", e.target.checked));
 document.getElementById("ferry-checkbox").addEventListener("change", e => toggleLayer("ferry", e.target.checked));
@@ -32,7 +35,7 @@ function toggleLayer(type, visible) {
     else map.removeLayer(layerGroups[type]);
 }
 
-// Vehicle colors
+// Vehicle colors based on GTFS route type
 const vehicleColors = {
     3: "#007bff", // bus
     2: "#dc3545", // train
@@ -40,33 +43,42 @@ const vehicleColors = {
     default: "#6c757d" // other/unknown
 };
 
-// Fetch static route info
+// --- Initial Data Fetch: Get Static Route Info ---
 async function fetchRoutes() {
     try {
         const res = await fetch(routesUrl, {
             headers: { "Ocp-Apim-Subscription-Key": atApiKey }
         });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        if (!res.ok) {
+            throw new Error(`Failed to fetch static routes: ${res.status} ${res.statusText}`);
+        }
         const json = await res.json();
-        json.data.forEach(r => routes[r.id] = r.attributes);
-        console.log("Routes loaded:", Object.keys(routes).length);
+        // The v3 endpoint returns an object with a `data` key
+        json.data.forEach(route => {
+            // Index routes by their route_id for easy lookup
+            routes[route.id] = route.attributes;
+        });
+        console.log("Static routes loaded:", Object.keys(routes).length);
     } catch (err) {
-        console.error("Error fetching routes:", err);
+        console.error("Error fetching static routes:", err);
         debugBox.textContent = `Error loading routes: ${err.message}`;
     }
 }
 
-// Fetch realtime vehicles
+// --- Main Loop: Fetch and Display Real-time Vehicle Data ---
 async function fetchVehicles() {
     try {
         const res = await fetch(realtimeUrl, {
             headers: { "Ocp-Apim-Subscription-Key": atApiKey }
         });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        if (!res.ok) {
+            throw new Error(`Failed to fetch vehicles: ${res.status} ${res.statusText}`);
+        }
         const json = await res.json();
+        // The legacy endpoint returns an object with a `response` key
         const vehicles = json.response.entity || [];
 
-        // Clear previous markers
+        // Clear previous markers from all layer groups
         Object.values(layerGroups).forEach(group => group.clearLayers());
 
         vehicles.forEach(v => {
@@ -76,59 +88,37 @@ async function fetchVehicles() {
             const lon = v.vehicle.position.longitude;
             const trip = v.vehicle.trip || {};
             const routeId = trip.route_id;
-            // NEW LINE - Add this
-            const routeInfo = Object.values(routes).find(r => routeId && r.route_short_name && routeId.startsWith(r.route_short_name));
-            const routeName = routeInfo
-                ? `${routeInfo.route_short_name || ""} ${routeInfo.route_long_name || ""}`.trim()
-                : "Unknown";
 
-            const licensePlate = v.vehicle.vehicle.license_plate || "N/A";
-
-            // Operator code
-            const operator = v.vehicle.vehicle.operator_code || "";
-            const vehicleId = `${operator} ${v.vehicle.vehicle.id}`;
-
-            // Determine vehicle type
             let typeKey = "other";
             let color = vehicleColors.default;
+            let routeInfo = routes[routeId];
+            let routeName = "Unknown";
 
-            if (routeInfo && routeInfo.route_type != null) {
-                switch (routeInfo.route_type) {
-                    case 3: typeKey = "bus"; color = vehicleColors[3]; break;
-                    case 2: typeKey = "train"; color = vehicleColors[2]; break;
-                    case 4: typeKey = "ferry"; color = vehicleColors[4]; break;
-                    default: typeKey = "other"; color = vehicleColors.default;
-                }
-            } else if (trip && trip.vehicle_type != null) {
-                switch (trip.vehicle_type) {
+            if (routeInfo) {
+                // Use route_type from the static data lookup
+                const routeType = routeInfo.route_type;
+                switch (routeType) {
                     case 3: typeKey = "bus"; color = vehicleColors[3]; break;
                     case 2: typeKey = "train"; color = vehicleColors[2]; break;
                     case 4: typeKey = "ferry"; color = vehicleColors[4]; break;
                 }
+                routeName = `${routeInfo.route_short_name || ""} ${routeInfo.route_long_name || ""}`.trim();
             }
-
-            // Speed conversion and clamping
+            
+            // Speed conversion and clamping (same logic as before)
             let speedKmh = v.vehicle.position.speed ? v.vehicle.position.speed * 3.6 : null;
-
             if (speedKmh !== null) {
-                switch (typeKey) {
-                    case "bus":
-                        if (speedKmh < 0 || speedKmh > 100) speedKmh = null;
-                        break;
-                    case "train":
-                        if (speedKmh < 0 || speedKmh > 120) speedKmh = null;
-                        break;
-                    case "ferry":
-                        if (speedKmh < 0 || speedKmh > 60) speedKmh = null;
-                        break;
-                    default:
-                        if (speedKmh < 0 || speedKmh > 160) speedKmh = null;
-                }
+                if (typeKey === "bus" && (speedKmh < 0 || speedKmh > 100)) speedKmh = null;
+                else if (typeKey === "train" && (speedKmh < 0 || speedKmh > 120)) speedKmh = null;
+                else if (typeKey === "ferry" && (speedKmh < 0 || speedKmh > 60)) speedKmh = null;
+                else if (speedKmh < 0 || speedKmh > 160) speedKmh = null; // General clamp
             }
-
             const speed = speedKmh !== null ? speedKmh.toFixed(1) + " km/h" : "N/A";
+            
+            // License plate
+            const licensePlate = v.vehicle.vehicle?.license_plate || "N/A";
 
-            // Create marker
+            // Create a custom circle marker with a class for styling
             const marker = L.circleMarker([lat, lon], {
                 radius: 6,
                 fillColor: color,
@@ -141,13 +131,11 @@ async function fetchVehicles() {
             marker.bindPopup(`
                 <b>Route:</b> ${routeName}<br>
                 <b>Route ID:</b> ${routeId || "N/A"}<br>
-                <b>Vehicle ID:</b> ${vehicleId}<br>
                 <b>License Plate:</b> ${licensePlate}<br>
                 <b>Speed:</b> ${speed}
             `);
 
             marker.addTo(layerGroups[typeKey]);
-            vehicleMarkers[v.vehicle.vehicle.id] = marker;
         });
 
         debugBox.textContent = `Last update: ${new Date().toLocaleTimeString()} | Vehicles: ${vehicles.length}`;
@@ -157,15 +145,10 @@ async function fetchVehicles() {
     }
 }
 
-// Initialize map
+// Initialize the application
 (async function init() {
     await fetchRoutes();
+    // Fetch vehicles immediately and then every 30 seconds
     await fetchVehicles();
     setInterval(fetchVehicles, 30000);
 })();
-
-
-
-
-
-
