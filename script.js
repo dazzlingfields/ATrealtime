@@ -1,3 +1,5 @@
+// v4
+
 const proxyBaseUrl = "https://atrealtime.vercel.app";
 const realtimeUrl = `${proxyBaseUrl}/api/realtime`;
 const routesUrl = `${proxyBaseUrl}/api/routes`;
@@ -11,21 +13,14 @@ const busLayer = L.layerGroup();
 const trainLayer = L.layerGroup();
 const ferryLayer = L.layerGroup();
 const outOfServiceLayer = L.layerGroup();
-
 const vehicleLayers = { bus: busLayer, train: trainLayer, ferry: ferryLayer, outOfService: outOfServiceLayer };
 
 const occupancyStatusMap = {
-    0: 'Empty',
-    1: 'Many seats available',
-    2: 'Few seats available',
-    3: 'Standing room only',
-    4: 'Crushed standing room only',
-    5: 'Full',
-    6: 'Not accepting passengers',
-    7: 'No data available'
+    0: 'Empty', 1: 'Many seats available', 2: 'Few seats available',
+    3: 'Standing room only', 4: 'Crushed standing room only',
+    5: 'Full', 6: 'Not accepting passengers', 7: 'No data available'
 };
 
-// Limit speeds for realism
 function limitSpeed(speed, type) {
     if (type === 'bus') return Math.min(speed, 100);
     if (type === 'train') return Math.min(speed, 120);
@@ -47,10 +42,10 @@ function getIconForVehicle(serviceType, isOutOfService) {
 async function fetchVehicles() {
     const statusDisplay = document.getElementById('status-display');
     statusDisplay.textContent = 'Updating...';
-
     try {
         const response = await fetch(realtimeUrl);
         const data = await response.json();
+        if (!Array.isArray(data)) throw new Error("Invalid vehicle data");
         renderVehicles(data);
         statusDisplay.textContent = `Last update: ${new Date().toLocaleTimeString()}`;
     } catch (err) {
@@ -61,7 +56,6 @@ async function fetchVehicles() {
 
 function renderVehicles(data) {
     const newIds = new Set();
-
     data.forEach(vehicle => {
         const vehicleId = vehicle.vehicle?.id;
         if (!vehicleId || !vehicle.vehicle?.position) return;
@@ -97,7 +91,6 @@ function renderVehicles(data) {
         } else {
             const marker = L.marker([lat, lon], { icon }).bindPopup(popupContent);
             vehicleMarkers[vehicleId] = marker;
-
             if (isOutOfService) outOfServiceLayer.addLayer(marker);
             else if (serviceType === 'bus') busLayer.addLayer(marker);
             else if (serviceType === 'train') trainLayer.addLayer(marker);
@@ -130,48 +123,41 @@ async function initializeMap() {
         const routes = await routesResponse.json();
         const trips = await tripsResponse.json();
 
-        routes.forEach(route => routeData[route.route_id] = route);
-        trips.forEach(trip => tripData[trip.trip_id] = trip);
+        if (Array.isArray(routes)) routes.forEach(route => routeData[route.route_id] = route);
+        if (Array.isArray(trips)) trips.forEach(trip => tripData[trip.trip_id] = trip);
 
         // Map layers
-        const osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap contributors' });
+        const lightLayer1 = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap contributors' });
         const lightLayer2 = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', { attribution: '© CartoDB' });
         const darkLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { attribution: '© CartoDB' });
         const satelliteLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { attribution: 'Tiles © Esri' });
 
         map = L.map('map').setView([-36.85, 174.76], 12);
-        osmLayer.addTo(map);
+        lightLayer1.addTo(map);
         busLayer.addTo(map);
         trainLayer.addTo(map);
         ferryLayer.addTo(map);
         outOfServiceLayer.addTo(map);
 
-        // Base map controls
-    const mapRadios = document.querySelectorAll('input[name="map-style"]');
-    	mapRadios.forEach(radio => radio.addEventListener('change', () => {
-        map.eachLayer(layer => {
-        if (![busLayer, trainLayer, ferryLayer, outOfServiceLayer].includes(layer)) map.removeLayer(layer);
-    });
-        if (document.getElementById('light-map').checked) lightLayer1.addTo(map);
-        if (document.getElementById('light-map-2').checked) lightLayer2.addTo(map);
-        if (document.getElementById('dark-map').checked) darkLayer.addTo(map);
-        if (document.getElementById('satellite-map').checked) satelliteLayer.addTo(map);
-}));
-
-
-        // Add a second light map option dynamically
-        const light2Label = document.createElement('label');
-        light2Label.innerHTML = '<input type="radio" name="map-style" id="light-map-2"> Light 2';
-        document.querySelector('.map-style-selector').appendChild(light2Label);
+        // Base map switching
+        document.querySelectorAll('input[name="map-style"]').forEach(radio => {
+            radio.addEventListener('change', () => {
+                map.eachLayer(layer => {
+                    if (![busLayer, trainLayer, ferryLayer, outOfServiceLayer].includes(layer)) map.removeLayer(layer);
+                });
+                if (document.getElementById('light-map').checked) lightLayer1.addTo(map);
+                if (document.getElementById('light-map-2').checked) lightLayer2.addTo(map);
+                if (document.getElementById('dark-map').checked) darkLayer.addTo(map);
+                if (document.getElementById('satellite-map').checked) satelliteLayer.addTo(map);
+            });
+        });
 
         // Vehicle checkboxes
-        document.getElementById('bus-checkbox').addEventListener('change', updateVehicleDisplay);
-        document.getElementById('train-checkbox').addEventListener('change', updateVehicleDisplay);
-        document.getElementById('ferry-checkbox').addEventListener('change', updateVehicleDisplay);
-        document.getElementById('outofservice-checkbox').addEventListener('change', updateVehicleDisplay);
+        ['bus', 'train', 'ferry', 'outofservice'].forEach(type => {
+            document.getElementById(`${type}-checkbox`).addEventListener('change', updateVehicleDisplay);
+        });
 
-       
-        // Fetch vehicles
+        // Start fetching vehicles
         fetchVehicles();
         setInterval(fetchVehicles, 30000);
 
@@ -180,17 +166,5 @@ async function initializeMap() {
     }
 }
 
-try {
-    const response = await fetch(realtimeUrl);
-    if (!response.ok) throw new Error('Network response not ok');
-    const data = await response.json();
-    renderVehicles(data);
-} catch (err) {
-    console.error('Error fetching vehicles:', err);
-    document.getElementById('status-display').textContent = 'Connection Error';
-}
-
-
+// Initialize the map
 initializeMap();
-
-
