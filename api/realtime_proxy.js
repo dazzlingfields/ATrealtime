@@ -5,6 +5,20 @@
 // The `module.exports` syntax is a standard way to export a function in a Node.js environment
 // like Vercel's serverless functions.
 module.exports = async (req, res) => {
+    // --- CORS Configuration ---
+    // This allows your GitHub Pages site to access this proxy.
+    // Replace YOUR_GITHUB_USERNAME with your actual GitHub username.
+    res.setHeader('Access-Control-Allow-Origin', 'https://atrealtime.github.io');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
+
+    // Handle preflight requests, which are sent by the browser before the actual request.
+    if (req.method === 'OPTIONS') {
+        res.status(200).end();
+        return;
+    }
+    // --- End CORS Configuration ---
+
     // 1. Get the API key from Vercel's environment variables.
     // This variable is securely stored on Vercel's servers.
     const atApiKey = process.env.AT_API_KEY;
@@ -41,4 +55,3 @@ module.exports = async (req, res) => {
         res.status(500).send('An error occurred while fetching data from the AT API.');
     }
 };
-
