@@ -1,4 +1,4 @@
-// v4.1 - GitHub Pages compatible, uses serverless proxy, map type selector, train stations with departures, 6-car detection
+// v4.2 - Show all vehicle markers immediately, 6-car detection only for stations
 const proxyBaseUrl = "https://atrealtime.vercel.app";
 const realtimeUrl = `${proxyBaseUrl}/api/realtime`;
 const routesUrl   = `${proxyBaseUrl}/api/routes`;
@@ -50,17 +50,24 @@ function toggleLayer(type, visible){ if(visible) map.addLayer(layerGroups[type])
 // --- Vehicle styles ---
 const vehicleColors = {3:"#007bff",2:"#dc3545",4:"#ffc107",default:"#6c757d"};
 const occupancyLabels = {0:"Empty",1:"Many Seats Available",2:"Few Seats Available",3:"Standing Room Only",4:"Crushed Standing Room Only",5:"Full",6:"Not Accepting Passengers"};
-const getVehicleIcon = color=>L.divIcon({className:'vehicle-icon',html:`<div style="background-color:${color};width:12px;height:12px;border-radius:50%;border:2px solid white;"></div>`,iconSize:[16,16],iconAnchor:[8,8]});
+const getVehicleIcon = color=>L.divIcon({
+  className:'vehicle-icon',
+  html:`<div style="background-color:${color};width:12px;height:12px;border-radius:50%;border:2px solid white;"></div>`,
+  iconSize:[16,16], iconAnchor:[8,8]
+});
 
 // --- Fetch helper ---
 async function safeFetch(url){
   try{
-    const res = await fetch(url,{cache:"no-store"});
+    const controller = new AbortController();
+    const timeout = setTimeout(()=>controller.abort(), 15000); // 15s timeout
+    const res = await fetch(url,{cache:"no-store", signal:controller.signal});
+    clearTimeout(timeout);
     if(!res.ok) throw new Error(`Failed fetch: ${res.status}`);
     return await res.json();
   } catch(err){
     console.error(err);
-    debugBox.textContent = "Unable to fetch API data";
+    debugBox.textContent = "Unable to fetch API data (may take longer to respond)";
     return null;
   }
 }
@@ -92,7 +99,7 @@ function getDistanceMeters(lat1, lon1, lat2, lon2){
   return R*c;
 }
 
-// --- Detect 6-car trains ---
+// --- Detect 6-car trains (only for station popups) ---
 function detectSixCarTrains(vehicleList){
   const sixCarPairs = new Set();
   const trains = vehicleList.filter(v=>v.vehicle?.trip?.route_id && v.vehicle.vehicle?.vehicle_type===2);
@@ -145,7 +152,7 @@ async function fetchVehicles(){
   const vehicles = json?.response?.entity || json?.entity || [];
   const newVehicleIds = new Set();
   const dataPromises = vehicles.map(v=>{
-    const vehicleId=v.vehicle?.vehicle?.id;
+    const vehicleId=v.vehicle?.vehicle?.id || `tmp-${v.vehicle.trip?.trip_id || Math.random()}`;
     const routeId=v.vehicle?.trip?.route_id;
     const tripId=v.vehicle?.trip?.trip_id;
     return Promise.all([routeId?fetchRouteById(routeId):null, tripId?fetchTripById(tripId):null, v, vehicleId]);
@@ -154,7 +161,7 @@ async function fetchVehicles(){
 
   results.forEach(result=>{
     const [routeInfo, tripInfo, v, vehicleId]=result;
-    if(!v.vehicle || !v.vehicle.position || !vehicleId) return;
+    if(!v.vehicle || !v.vehicle.position) return;
     newVehicleIds.add(vehicleId);
 
     const lat=v.vehicle.position.latitude;
@@ -207,13 +214,13 @@ async function fetchVehicles(){
 
 // --- Train station icon ---
 const stationIcon = L.icon({
-  iconUrl: 'train.png', 
-  iconSize: [32, 32],           // Adjust size as needed
-  iconAnchor: [16, 32],         // The point of the icon which will correspond to marker's location
-  popupAnchor: [0, -32]         // Where the popup opens relative to the icon
+  iconUrl: 'train.png',
+  iconSize: [32, 32],
+  iconAnchor: [16, 32],
+  popupAnchor: [0, -32]
 });
 
-// --- Add train stations (updated) ---
+// --- Add train stations ---
 async function addTrainStations(){
   const json = await safeFetch(`${stopsUrl}?type=train`);
   if(!json?.data) return;
@@ -224,17 +231,12 @@ async function addTrainStations(){
     const name = stop.attributes.stop_name;
     const stopId = stop.id;
 
-    // Use custom icon
     const marker = L.marker([lat, lon], {icon: stationIcon, stopName: name});
     marker.addTo(map);
-
-    // On click, update popup with next departures
     marker.on("click", () => updateStationPopup(marker, stopId));
-
     stationMarkers[stopId] = marker;
   });
 }
-
 
 // --- Init ---
 (async function init(){
@@ -242,5 +244,3 @@ async function addTrainStations(){
   await fetchVehicles();
   setInterval(fetchVehicles,15000);
 })();
-
-
