@@ -1,4 +1,4 @@
-// ================== v4.4 - Real-time Vehicle Tracking ==================
+// ================== v4.4 - Real-time Vehicle Tracking (with 6-car counter) ==================
 
 // --- API endpoints ---
 const proxyBaseUrl = "https://atrealtime.vercel.app";
@@ -42,6 +42,7 @@ const debugBox = document.getElementById("debug");
 const routes = {};
 const trips = {};
 const vehicleMarkers = {};
+let sixCarCount = 0; // <--- NEW: global counter
 
 // --- Layer groups ---
 const layerGroups = {
@@ -119,6 +120,7 @@ async function fetchVehicles(){
 
   const vehicles = json?.response?.entity || json?.entity || [];
   const newVehicleIds = new Set();
+  sixCarCount = 0; // reset counter each fetch
 
   const dataPromises = vehicles.map(v=>{
     const vehicleId = v.vehicle?.vehicle?.id;
@@ -164,6 +166,16 @@ async function fetchVehicles(){
       routeName = routeInfo.route_short_name || "N/A";
     }
 
+    // --- NEW: 6-car detection (simple heuristic) ---
+    let sixCar = false;
+    if(typeKey==="train"){
+      // Example heuristic: vehicle label contains "6" or starts with "6"
+      if(vehicleLabel.includes("6") || licensePlate.includes("6CAR")){
+        sixCar = true;
+        sixCarCount++;
+      }
+    }
+
     // Speed sanity
     let speedKmh = v.vehicle.position.speed ? v.vehicle.position.speed*3.6 : null;
     if(speedKmh!==null){
@@ -180,7 +192,8 @@ async function fetchVehicles(){
       <b>Vehicle:</b> ${vehicleLabelWithOperator}<br>
       <b>Number Plate:</b> ${licensePlate}<br>
       <b>Speed:</b> ${speed}<br>
-      <b>Occupancy:</b> ${occupancy}
+      <b>Occupancy:</b> ${occupancy}<br>
+      ${sixCar ? "<b>Consist:</b> 6-car train 🚆" : ""}
     `;
 
     if(vehicleMarkers[vehicleId]){
@@ -203,7 +216,7 @@ async function fetchVehicles(){
     }
   });
 
-  debugBox.textContent = `Last update: ${new Date().toLocaleTimeString()} | Vehicles: ${vehicles.length}`;
+  debugBox.textContent = `Last update: ${new Date().toLocaleTimeString()} | Vehicles: ${vehicles.length} | 6-car trains: ${sixCarCount}`;
 }
 
 // --- Init ---
