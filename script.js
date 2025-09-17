@@ -1,4 +1,4 @@
-// Version 1.1
+// Version 1.2
 // --- API Key and Endpoints ---
 const atApiKey = "18e2ee8ee75d4e6ca7bd446ffa9bd50f";
 const realtimeUrl = "https://api.at.govt.nz/realtime/legacy";
@@ -26,7 +26,7 @@ const baseMaps = {
 };
 
 // Set the default map layer
-baseMaps.streets.addTo(map);
+baseMaps.light.addTo(map);
 
 // --- Global Data Stores and UI Elements ---
 const debugBox = document.getElementById("debug");
