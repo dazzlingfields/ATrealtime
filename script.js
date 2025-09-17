@@ -1,4 +1,4 @@
-// v3.6 - GitHub Pages compatible, Te Huia removed
+// v3.7 - GitHub Pages compatible, Te Huia removed, AllOrigins JSON fix
 const proxyBaseUrl = "https://atrealtime.vercel.app";  
 const corsProxy = "https://api.allorigins.win/raw?url="; // CORS fix
 
@@ -102,8 +102,17 @@ async function fetchTripById(tripId) {
 
 // --- Fetch realtime vehicles ---
 async function fetchVehicles() {
-  const json = await safeFetch(realtimeUrl);
-  if (!json) return; // abort if fetch failed
+  const rawJson = await safeFetch(realtimeUrl);
+  if (!rawJson) return;
+
+  let json;
+  try {
+    json = rawJson.contents ? JSON.parse(rawJson.contents) : rawJson;
+  } catch (err) {
+    console.error("Failed to parse JSON from CORS proxy:", err);
+    debugBox.textContent = `Error parsing vehicle data`;
+    return;
+  }
 
   const vehicles = json?.response?.entity || json?.entity || [];
   const newVehicleIds = new Set();
