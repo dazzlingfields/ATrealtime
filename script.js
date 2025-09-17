@@ -1,4 +1,4 @@
-// v3.9 - GitHub Pages compatible, uses serverless proxy
+// v3.10 - GitHub Pages compatible, uses serverless proxy, map type selector added
 const proxyBaseUrl = "https://atrealtime.vercel.app";
 const realtimeUrl = `${proxyBaseUrl}/api/realtime`;
 const routesUrl   = `${proxyBaseUrl}/api/routes`;
@@ -6,10 +6,26 @@ const tripsUrl    = `${proxyBaseUrl}/api/trips`;
 const stopsUrl    = `${proxyBaseUrl}/api/stops`;
 
 // --- Map setup ---
-const map = L.map("map").setView([-36.8485, 174.7633], 13);
-L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-  attribution: "&copy; OpenStreetMap contributors"
-}).addTo(map);
+const map = L.map("map", { zoomControl: true }).setView([-36.8485, 174.7633], 13);
+
+// --- Base maps ---
+const baseLayers = {
+  "Light": L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", {
+    attribution: '&copy; OpenStreetMap &copy; CARTO', subdomains: 'abcd', maxZoom: 19
+  }).addTo(map), // Default
+  "Dark": L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+    attribution: '&copy; OpenStreetMap &copy; CARTO', subdomains: 'abcd', maxZoom: 19
+  }),
+  "OSM": L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    attribution: "&copy; OpenStreetMap contributors"
+  }),
+  "Satellite": L.tileLayer("https://{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}", {
+    maxZoom: 20, subdomains:['mt0','mt1','mt2','mt3'], attribution: '&copy; Google'
+  })
+};
+
+// Add layer control
+L.control.layers(baseLayers).addTo(map);
 
 // --- Global data ---
 const debugBox = document.getElementById("debug");
