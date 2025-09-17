@@ -152,9 +152,12 @@ async function fetchVehicles() {
         routeName = routeInfo.route_short_name || "N/A";
       }
 
-      if (tripInfo) {
-        destination = tripInfo.trip_headsign || "N/A";
-      }
+       if (tripInfo) {
+      destination = tripInfo.trip_headsign 
+             || tripInfo.route_long_name 
+             || tripInfo.route_desc 
+             || "N/A";
+    }
 
       // Te Huia special case
       if (v.vehicle.trip?.route_id === "15636") {
@@ -216,3 +219,4 @@ async function fetchVehicles() {
   fetchVehicles();
   setInterval(fetchVehicles, 15000);
 })();
+
