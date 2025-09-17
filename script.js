@@ -1,4 +1,6 @@
-// v3.11 - Improved vehicle classification, GitHub Pages compatible, uses serverless proxy
+// v3.12 - GitHub Pages compatible, uses serverless proxy, map type selector, off-route detection
+// Requires turf.js
+
 const proxyBaseUrl = "https://atrealtime.vercel.app";
 const realtimeUrl = `${proxyBaseUrl}/api/realtime`;
 const routesUrl   = `${proxyBaseUrl}/api/routes`;
@@ -23,8 +25,6 @@ const baseLayers = {
     maxZoom: 20, subdomains:['mt0','mt1','mt2','mt3'], attribution: '&copy; Google'
   })
 };
-
-// Add layer control
 L.control.layers(baseLayers).addTo(map);
 
 // --- Global data ---
@@ -33,6 +33,7 @@ const routes = {};
 const trips = {};
 const vehicleMarkers = {};
 
+// Layer groups
 const layerGroups = {
   bus: L.layerGroup().addTo(map),
   train: L.layerGroup().addTo(map),
@@ -94,6 +95,15 @@ async function fetchTripById(tripId){
   return null;
 }
 
+// --- Off-route detection ---
+function checkOffRoute(vehicleLat, vehicleLon, routeShape) {
+  if(!routeShape || !routeShape.length) return false; // No shape to compare
+  const vehiclePoint = turf.point([vehicleLon, vehicleLat]);
+  const routeLine = turf.lineString(routeShape.map(p=>[p[1],p[0]])); // assuming shape=[lat,lon]
+  const distanceMeters = turf.pointToLineDistance(vehiclePoint, routeLine, { units: 'meters' });
+  return distanceMeters > 50; // threshold in meters
+}
+
 // --- Fetch vehicles ---
 async function fetchVehicles(){
   const json = await safeFetch(realtimeUrl);
@@ -122,47 +132,25 @@ async function fetchVehicles(){
     const vehicleLabel = v.vehicle.vehicle?.label || "N/A";
     const licensePlate = v.vehicle.vehicle?.license_plate || "N/A";
     const occupancyStatus = v.vehicle.occupancy_status;
-    const destination = tripInfo?.trip_headsign || v.vehicle.trip?.trip_headsign || "N/A";
-    const occupancy = occupancyStatus!==undefined?occupancyLabels[occupancyStatus]||"Unknown":"N/A";
 
-    // --- Improved vehicle type classification ---
     let typeKey = "other";
     let color = vehicleColors.default;
+    let routeName = "N/A";
+    let destination = tripInfo?.trip_headsign || v.vehicle.trip?.trip_headsign || "N/A";
+    let speed = "N/A";
+    const occupancy = occupancyStatus!==undefined?occupancyLabels[occupancyStatus]||"Unknown":"N/A";
 
-    // 1) Try route_type
-    if(routeInfo?.route_type!==undefined){
-      switch(routeInfo.route_type){
+    if(routeInfo){
+      const routeType = routeInfo.route_type;
+      switch(routeType){
         case 3:typeKey="bus";color=vehicleColors[3];break;
         case 2:typeKey="train";color=vehicleColors[2];break;
         case 4:typeKey="ferry";color=vehicleColors[4];break;
       }
-    }
-    // 2) Try vehicle_type
-    else if(v.vehicle.vehicle?.vehicle_type){
-      const vt = v.vehicle.vehicle.vehicle_type.toString().toLowerCase();
-      if(vt.includes("bus")) { typeKey="bus"; color=vehicleColors[3]; }
-      else if(vt.includes("train")) { typeKey="train"; color=vehicleColors[2]; }
-      else if(vt.includes("ferry") || vt.includes("vessel")) { typeKey="ferry"; color=vehicleColors[4]; }
-    }
-    // 3) Infer from route_short_name
-    else if(routeInfo?.route_short_name){
-      const rn = routeInfo.route_short_name.toLowerCase();
-      if(rn.includes("bus")) { typeKey="bus"; color=vehicleColors[3]; }
-      else if(rn.includes("train")) { typeKey="train"; color=vehicleColors[2]; }
-      else if(rn.includes("ferry")) { typeKey="ferry"; color=vehicleColors[4]; }
-    }
-    // 4) Infer from trip_headsign
-    if(typeKey==="other" && destination){
-      const d = destination.toLowerCase();
-      if(d.includes("bus")) { typeKey="bus"; color=vehicleColors[3]; }
-      else if(d.includes("train")) { typeKey="train"; color=vehicleColors[2]; }
-      else if(d.includes("ferry")) { typeKey="ferry"; color=vehicleColors[4]; }
+      routeName = routeInfo.route_short_name||"N/A";
     }
 
-    const routeName = routeInfo?.route_short_name || "N/A";
-
-    // --- Speed sanity ---
-    let speed = "N/A";
+    // Speed sanity
     let speedKmh = v.vehicle.position.speed ? v.vehicle.position.speed*3.6 : null;
     if(speedKmh!==null){
       let maxSpeed = typeKey==="bus"?100:typeKey==="train"?120:typeKey==="ferry"?60:160;
@@ -172,13 +160,20 @@ async function fetchVehicles(){
     const operator = v.vehicle.vehicle?.operator_id || "";
     const vehicleLabelWithOperator = operator+vehicleLabel;
 
+    // --- Off-route check ---
+    let offRoute = false;
+    if(routeInfo?.shape) offRoute = checkOffRoute(lat, lon, routeInfo.shape);
+
+    const routeStatus = offRoute ? "Off Route" : "On Route";
+
     const popupContent = `
       <b>Route:</b> ${routeName}<br>
       <b>Destination:</b> ${destination}<br>
       <b>Vehicle:</b> ${vehicleLabelWithOperator}<br>
       <b>Number Plate:</b> ${licensePlate}<br>
       <b>Speed:</b> ${speed}<br>
-      <b>Occupancy:</b> ${occupancy}
+      <b>Occupancy:</b> ${occupancy}<br>
+      <b>Status:</b> ${routeStatus}
     `;
 
     if(vehicleMarkers[vehicleId]){
