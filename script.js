@@ -1,4 +1,4 @@
-// ================== v4.5 - Real-time Vehicle Tracking (AM Pairing, 6-car count + display) ==================
+// ================== v4.6 - Real-time Vehicle Tracking (AM Pairing only) ==================
 
 // --- API endpoints ---
 const proxyBaseUrl = "https://atrealtime.vercel.app";
@@ -31,13 +31,9 @@ L.control.layers(baseMaps).addTo(map);
 
 // --- Globals ---
 const debugBox = document.getElementById("debug");
-const sixCarCounterBox = document.getElementById("sixcar-counter");
-const sixCarPairsBox = document.getElementById("sixcar-pairs");
 const routes = {};
 const trips = {};
 const vehicleMarkers = {};
-let sixCarCount = 0;
-let sixCarPairsList = [];
 
 // --- Layer groups ---
 const layerGroups = {
@@ -147,8 +143,6 @@ async function fetchVehicles(){
 
   const vehicles = json?.response?.entity || json?.entity || [];
   const newVehicleIds = new Set();
-  sixCarCount = 0;
-  sixCarPairsList = [];
 
   const dataPromises = vehicles.map(v=>{
     const vehicleId = v.vehicle?.vehicle?.id;
@@ -231,15 +225,13 @@ async function fetchVehicles(){
     }
   });
 
-  // Pair AM trains
+  // Pair AM trains and update popup
   const pairs = pairAMTrains(inServiceAMTrains, outOfServiceAMTrains);
   pairs.forEach(pair=>{
     const marker = vehicleMarkers[pair.inTrain.vehicleId];
     if(marker){
       const oldContent = marker.getPopup().getContent();
       marker.setPopupContent(oldContent + `<br><b>Paired to:</b> ${pair.outTrain.vehicleLabel}`);
-      sixCarCount++;
-      sixCarPairsList.push(`${pair.inTrain.vehicleLabel} ⇄ ${pair.outTrain.vehicleLabel}`);
     }
   });
 
@@ -251,10 +243,8 @@ async function fetchVehicles(){
     }
   });
 
-  // Update displays
+  // Update debug info
   debugBox.textContent = `Last update: ${new Date().toLocaleTimeString()} | Vehicles: ${vehicles.length}`;
-  sixCarCounterBox.textContent = `6-car trains: ${sixCarCount}`;
-  sixCarPairsBox.innerHTML = `6-car pairs:<br>${sixCarPairsList.join("<br>")}`;
 }
 
 // --- Init ---
