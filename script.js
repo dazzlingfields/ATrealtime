@@ -1,10 +1,11 @@
-// ================== v4.6 - Real-time Vehicle Tracking (AM Pairing only) ==================
+// ================== v4.6b - Real-time Vehicle Tracking (AM Pairing + Bus Types JSON) ==================
 
 // --- API endpoints ---
 const proxyBaseUrl = "https://atrealtime.vercel.app";
 const realtimeUrl = `${proxyBaseUrl}/api/realtime`;
 const routesUrl   = `${proxyBaseUrl}/api/routes`;
 const tripsUrl    = `${proxyBaseUrl}/api/trips`;
+const busTypesUrl = "busTypes.json"; // JSON file hosted on GitHub Pages
 
 // --- Map setup ---
 const map = L.map("map").setView([-36.8485, 174.7633], 12);
@@ -34,6 +35,7 @@ const debugBox = document.getElementById("debug");
 const routes = {};
 const trips = {};
 const vehicleMarkers = {};
+let busTypes = {}; // loaded from JSON
 
 // --- Layer groups ---
 const layerGroups = {
@@ -78,6 +80,12 @@ async function safeFetch(url){
     console.error(err);
     return null;
   }
+}
+
+// --- Load bus types JSON ---
+async function loadBusTypes(){
+  const data = await safeFetch(busTypesUrl);
+  if(data) busTypes = data;
 }
 
 // --- Route/Trip caching ---
@@ -144,32 +152,21 @@ async function fetchVehicles(){
   const vehicles = json?.response?.entity || json?.entity || [];
   const newVehicleIds = new Set();
 
-  const dataPromises = vehicles.map(v=>{
-    const vehicleId = v.vehicle?.vehicle?.id;
-    const routeId = v.vehicle?.trip?.route_id;
-    const tripId  = v.vehicle?.trip?.trip_id;
-    return Promise.all([
-      routeId ? fetchRouteById(routeId) : null,
-      tripId ? fetchTripById(tripId) : null,
-      v,
-      vehicleId
-    ]);
-  });
-
-  const results = await Promise.all(dataPromises);
-
-  // Collect in-service and out-of-service AM trains
   const inServiceAMTrains = [];
   const outOfServiceAMTrains = [];
 
-  results.forEach(result=>{
-    const [routeInfo, tripInfo, v, vehicleId] = result;
-    if(!v.vehicle || !v.vehicle.position || !vehicleId) return;
+  for(const v of vehicles){
+    const vehicleId = v.vehicle?.vehicle?.id;
+    const routeId = v.vehicle?.trip?.route_id;
+    const tripId  = v.vehicle?.trip?.trip_id;
+    if(!v.vehicle || !v.vehicle.position || !vehicleId) continue;
     newVehicleIds.add(vehicleId);
 
     const lat = v.vehicle.position.latitude;
     const lon = v.vehicle.position.longitude;
     const vehicleLabel = v.vehicle.vehicle?.label || "N/A";
+    const operator = v.vehicle.vehicle?.operator_id || "";
+    const vehicleLabelWithOperator = operator+vehicleLabel;
     const licensePlate = v.vehicle.vehicle?.license_plate || "N/A";
     const occupancyStatus = v.vehicle.occupancy_status;
     const speedKmh = v.vehicle.position.speed ? v.vehicle.position.speed*3.6 : 0;
@@ -177,42 +174,56 @@ async function fetchVehicles(){
     let typeKey = "other";
     let color = vehicleColors.default;
     let routeName = "N/A";
-    let destination = tripInfo?.trip_headsign || v.vehicle.trip?.trip_headsign || "N/A";
-    const occupancy = occupancyStatus!==undefined
-      ? occupancyLabels[occupancyStatus] || "Unknown"
-      : "N/A";
+    let destination = v.vehicle.trip?.trip_headsign || "N/A";
+    const occupancy = occupancyStatus!==undefined ? occupancyLabels[occupancyStatus] || "Unknown" : "N/A";
 
-    if(routeInfo){
-      const routeType = routeInfo.route_type;
-      switch(routeType){
-        case 3: typeKey="bus"; color=vehicleColors[3]; break;
-        case 2: typeKey="train"; color=vehicleColors[2]; break;
-        case 4: typeKey="ferry"; color=vehicleColors[4]; break;
+    // --- Determine type from route ---
+    if(routeId){
+      const routeInfo = await fetchRouteById(routeId);
+      if(routeInfo){
+        const routeType = routeInfo.route_type;
+        switch(routeType){
+          case 3: typeKey="bus"; color=vehicleColors[3]; break;
+          case 2: typeKey="train"; color=vehicleColors[2]; break;
+          case 4: typeKey="ferry"; color=vehicleColors[4]; break;
+        }
+        routeName = routeInfo.route_short_name || "N/A";
       }
-      routeName = routeInfo.route_short_name || "N/A";
     }
 
-    if(vehicleLabel.startsWith("AM")){
-      if(typeKey==="train") inServiceAMTrains.push({vehicleId, lat, lon, speedKmh, vehicleLabel});
-      else outOfServiceAMTrains.push({vehicleId, lat, lon, speedKmh, vehicleLabel});
+    // --- Bus type from JSON ---
+    let busType = "";
+    if(typeKey==="bus"){
+      for(const type in busTypes){
+        if(busTypes[type].includes(vehicleLabelWithOperator)){
+          busType = type;
+          break;
+        }
+      }
     }
 
+    // --- Speed clamp ---
     let speed = "N/A";
-    let maxSpeed = typeKey==="bus"?100:typeKey==="train"?160:typeKey==="ferry"?80:180; 
+    const maxSpeed = typeKey==="bus"?100:typeKey==="train"?160:typeKey==="ferry"?80:180; 
     if(speedKmh>=0 && speedKmh<=maxSpeed) speed = speedKmh.toFixed(1)+" km/h";
-
-    const operator = v.vehicle.vehicle?.operator_id || "";
-    const vehicleLabelWithOperator = operator+vehicleLabel;
 
     const popupContent = `
       <b>Route:</b> ${routeName}<br>
       <b>Destination:</b> ${destination}<br>
       <b>Vehicle:</b> ${vehicleLabelWithOperator}<br>
+      <b>Bus Type:</b> ${busType}<br>
       <b>Number Plate:</b> ${licensePlate}<br>
       <b>Speed:</b> ${speed}<br>
       <b>Occupancy:</b> ${occupancy}
     `;
 
+    // Track AM trains
+    if(vehicleLabel.startsWith("AM")){
+      if(typeKey==="train") inServiceAMTrains.push({vehicleId, lat, lon, speedKmh, vehicleLabel});
+      else outOfServiceAMTrains.push({vehicleId, lat, lon, speedKmh, vehicleLabel});
+    }
+
+    // --- Add/update marker ---
     if(vehicleMarkers[vehicleId]){
       vehicleMarkers[vehicleId].setLatLng([lat,lon]);
       vehicleMarkers[vehicleId].setPopupContent(popupContent);
@@ -223,9 +234,9 @@ async function fetchVehicles(){
       newMarker.addTo(layerGroups[typeKey]);
       vehicleMarkers[vehicleId]=newMarker;
     }
-  });
+  }
 
-  // Pair AM trains and update popup
+  // Pair AM trains
   const pairs = pairAMTrains(inServiceAMTrains, outOfServiceAMTrains);
   pairs.forEach(pair=>{
     const marker = vehicleMarkers[pair.inTrain.vehicleId];
@@ -243,12 +254,12 @@ async function fetchVehicles(){
     }
   });
 
-  // Update debug info
   debugBox.textContent = `Last update: ${new Date().toLocaleTimeString()} | Vehicles: ${vehicles.length}`;
 }
 
 // --- Init ---
 (async function init(){
+  await loadBusTypes();   // <-- load bus type JSON
   fetchVehicles();
   setInterval(fetchVehicles, 15000);
 })();
