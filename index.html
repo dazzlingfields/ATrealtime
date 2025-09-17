@@ -36,31 +36,43 @@
             font-weight: bold;
         }
 
-        #vehicle-controls {
+        #controls {
             position: absolute;
-            top: 65px;
-            left: 10px;
+            top: 10px;
+            right: 10px;
             z-index: 1000;
-            background: rgba(0, 0, 0, 0.8);
-            color: white;
-            padding: 10px;
-            border-radius: 5px;
             display: flex;
             flex-direction: column;
             gap: 10px;
+            align-items: flex-end;
         }
 
-        #vehicle-controls h4 {
+        #vehicle-controls, #map-controls {
+            background-color: rgba(0, 0, 0, 0.6);
+            color: white;
+            padding: 15px;
+            border-radius: 8px;
+        }
+
+        #vehicle-controls h4, #map-controls h4 {
             margin: 0 0 5px 0;
             padding-bottom: 5px;
             border-bottom: 1px solid rgba(255, 255, 255, 0.3);
         }
 
-        #vehicle-controls label {
+        #vehicle-controls label, #map-controls select {
             display: flex;
             align-items: center;
             gap: 10px;
             cursor: pointer;
+        }
+
+        #map-controls select {
+            background-color: #333;
+            color: white;
+            border: 1px solid #666;
+            padding: 5px;
+            border-radius: 4px;
         }
 
         #debug {
@@ -79,22 +91,23 @@
 <body>
     <h1 id="title">AT Realtime Map</h1>
 
-    <div id="vehicle-controls">
-        <h4>Vehicle Types</h4>
-        <label><input type="checkbox" id="bus-checkbox" checked> Buses</label>
-        <label><input type="checkbox" id="train-checkbox" checked> Trains</label>
-        <label><input type="checkbox" id="ferry-checkbox" checked> Ferries</label>
-        <label><input type="checkbox" id="other-checkbox" checked> Other</label>
-    </div>
-
-    <div id="map-controls" class="leaflet-control">
-        <h4>Base Map</h4>
-        <select id="base-map-selector">
-            <option value="streets">Streets</option>
-            <option value="satellite">Satellite</option>
-            <option value="dark">Dark</option>
-            <option value="light">Light</option>
-        </select>
+    <div id="controls">
+        <div id="map-controls" class="leaflet-control">
+            <h4>Base Map</h4>
+            <select id="base-map-selector">
+                <option value="streets" selected>Streets</option>
+                <option value="satellite">Satellite</option>
+                <option value="dark">Dark</option>
+                <option value="light">Light</option>
+            </select>
+        </div>
+        <div id="vehicle-controls">
+            <h4>Vehicle Types</h4>
+            <label><input type="checkbox" id="bus-checkbox" checked> Buses</label>
+            <label><input type="checkbox" id="train-checkbox" checked> Trains</label>
+            <label><input type="checkbox" id="ferry-checkbox" checked> Ferries</label>
+            <label><input type="checkbox" id="other-checkbox" checked> Other/Unknown</label>
+        </div>
     </div>
 
     <div id="map"></div>
