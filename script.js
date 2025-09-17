@@ -1,10 +1,8 @@
-// v4 - Real-time map with train stations and departures
+// v4 - Real-time vehicle tracking
 const proxyBaseUrl = "https://atrealtime.vercel.app";
 const realtimeUrl = `${proxyBaseUrl}/api/realtime`;
 const routesUrl   = `${proxyBaseUrl}/api/routes`;
 const tripsUrl    = `${proxyBaseUrl}/api/trips`;
-const stopsUrl    = `${proxyBaseUrl}/api/stops`;
-const stopTimesUrl = `${proxyBaseUrl}/api/stopTimes`;
 
 // --- Map setup ---
 const map = L.map("map", { zoomControl: true }).setView([-36.8485, 174.7633], 13);
@@ -13,7 +11,7 @@ const map = L.map("map", { zoomControl: true }).setView([-36.8485, 174.7633], 13
 const baseLayers = {
   "Light": L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", {
     attribution: '&copy; OpenStreetMap &copy; CARTO', subdomains: 'abcd', maxZoom: 19
-  }).addTo(map), // Default
+  }).addTo(map),
   "Dark": L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
     attribution: '&copy; OpenStreetMap &copy; CARTO', subdomains: 'abcd', maxZoom: 19
   }),
@@ -31,19 +29,17 @@ const debugBox = document.getElementById("debug");
 const routes = {};
 const trips = {};
 const vehicleMarkers = {};
-const trainStationMarkers = {};
 
 // --- Layer groups ---
 const layerGroups = {
   bus: L.layerGroup().addTo(map),
   train: L.layerGroup().addTo(map),
   ferry: L.layerGroup().addTo(map),
-  other: L.layerGroup().addTo(map),
-  stations: L.layerGroup().addTo(map)
+  other: L.layerGroup().addTo(map)
 };
 
 // --- Layer toggles ---
-["bus","train","ferry","other","stations"].forEach(type=>{
+["bus","train","ferry","other"].forEach(type=>{
   const checkbox = document.getElementById(type+"-checkbox");
   if(checkbox){
     checkbox.addEventListener("change", e=>toggleLayer(type, e.target.checked));
@@ -56,8 +52,15 @@ function toggleLayer(type, visible){
 
 // --- Vehicle styles ---
 const vehicleColors = { 3:"#007bff", 2:"#dc3545", 4:"#ffc107", default:"#6c757d" };
-const occupancyLabels = { 0:"Empty",1:"Many Seats Available",2:"Few Seats Available",3:"Standing Room Only",4:"Crushed Standing Room Only",5:"Full",6:"Not Accepting Passengers" };
-const getVehicleIcon = color => L.divIcon({ className:'vehicle-icon', html:`<div style="background-color:${color};width:12px;height:12px;border-radius:50%;border:2px solid white;"></div>`, iconSize:[16,16], iconAnchor:[8,8] });
+const occupancyLabels = {
+  0:"Empty",1:"Many Seats Available",2:"Few Seats Available",
+  3:"Standing Room Only",4:"Crushed Standing Room Only",5:"Full",6:"Not Accepting Passengers"
+};
+const getVehicleIcon = color => L.divIcon({
+  className:'vehicle-icon',
+  html:`<div style="background-color:${color};width:12px;height:12px;border-radius:50%;border:2px solid white;"></div>`,
+  iconSize:[16,16], iconAnchor:[8,8]
+});
 
 // --- Safe fetch ---
 async function safeFetch(url){
@@ -120,7 +123,7 @@ async function fetchVehicles(){
     let routeName = "N/A";
     let destination = tripInfo?.trip_headsign || v.vehicle.trip?.trip_headsign || "N/A";
     let speed = "N/A";
-    const occupancy = occupancyStatus!==undefined?occupancyLabels[occupancyStatus]||"Unknown":"N/A";
+    const occupancy = occupancyStatus!==undefined ? occupancyLabels[occupancyStatus] || "Unknown" : "N/A";
 
     if(routeInfo){
       const routeType = routeInfo.route_type;
@@ -129,10 +132,9 @@ async function fetchVehicles(){
         case 2:typeKey="train";color=vehicleColors[2];break;
         case 4:typeKey="ferry";color=vehicleColors[4];break;
       }
-      routeName = routeInfo.route_short_name||"N/A";
+      routeName = routeInfo.route_short_name || "N/A";
     }
 
-    // Speed sanity
     let speedKmh = v.vehicle.position.speed ? v.vehicle.position.speed*3.6 : null;
     if(speedKmh!==null){
       let maxSpeed = typeKey==="bus"?100:typeKey==="train"?120:typeKey==="ferry"?60:160;
@@ -173,49 +175,8 @@ async function fetchVehicles(){
   debugBox.textContent = `Last update: ${new Date().toLocaleTimeString()} | Vehicles: ${vehicles.length}`;
 }
 
-// --- Train stations ---
-async function fetchTrainStations(){
-  const json = await safeFetch(`${stopsUrl}?filter[route_type]=2`); // route_type 2 = train
-  if(!json?.data) return;
-  json.data.forEach(stop=>{
-    const lat = stop.attributes.latitude;
-    const lon = stop.attributes.longitude;
-    const name = stop.attributes.stop_name;
-    const stopId = stop.id;
-
-    const marker = L.marker([lat,lon], {icon: L.divIcon({className:'station-icon', html:`<div style="background-color:#28a745;width:10px;height:10px;border-radius:50%;border:2px solid white;"></div>`, iconSize:[16,16], iconAnchor:[8,8]})});
-    marker.bindPopup(`<b>${name}</b><br>Loading departures...`);
-    marker.on("click", async ()=>{
-      const departures = await fetchStopDepartures(stopId);
-      const html = `<b>${name}</b><br>${departures}`;
-      marker.setPopupContent(html).openPopup();
-    });
-    marker.addTo(layerGroups.stations);
-    trainStationMarkers[stopId] = marker;
-  });
-}
-
-// --- Fetch next departures ---
-async function fetchStopDepartures(stopId){
-  const today = new Date().toISOString().split('T')[0];
-  const nowHour = new Date().getHours();
-  const url = `${stopsUrl}/${stopId}/stoptrips?filter[date]=${today}&filter[start_hour]=${nowHour}&filter[hour_range]=2`;
-  const json = await safeFetch(url);
-  if(!json?.data) return "No upcoming departures";
-
-  // Sort and take next 2 in each direction
-  const departures = json.data.slice(0,4).map(d=>{
-    const tripHeadsign = d.attributes.trip_headsign || "N/A";
-    const platform = d.attributes.platform_code || "N/A";
-    const time = d.attributes.arrival_time || d.attributes.departure_time || "N/A";
-    return `${time} - ${tripHeadsign} (Platform ${platform})`;
-  }).join("<br>");
-  return departures || "No upcoming departures";
-}
-
 // --- Init ---
 (async function init(){
   fetchVehicles();
   setInterval(fetchVehicles, 15000);
-  await fetchTrainStations();
 })();
