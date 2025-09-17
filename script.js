@@ -1,7 +1,9 @@
-// v5 - Real-time vehicle tracking via serverless proxy
-const realtimeUrl = "/api/realtime"; // points to your serverless function
-const routesUrl   = "https://atrealtime.vercel.app/api/routes"; // still needs to fetch route info
-const tripsUrl    = "https://atrealtime.vercel.app/api/trips";  // still needs to fetch trip info
+// v3.10 - GitHub Pages compatible, uses serverless proxy, map type selector added
+const proxyBaseUrl = "https://atrealtime.vercel.app";
+const realtimeUrl = `${proxyBaseUrl}/api/realtime`;
+const routesUrl   = `${proxyBaseUrl}/api/routes`;
+const tripsUrl    = `${proxyBaseUrl}/api/trips`;
+const stopsUrl    = `${proxyBaseUrl}/api/stops`;
 
 // --- Map setup ---
 const map = L.map("map", { zoomControl: true }).setView([-36.8485, 174.7633], 13);
@@ -10,7 +12,7 @@ const map = L.map("map", { zoomControl: true }).setView([-36.8485, 174.7633], 13
 const baseLayers = {
   "Light": L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", {
     attribution: '&copy; OpenStreetMap &copy; CARTO', subdomains: 'abcd', maxZoom: 19
-  }).addTo(map),
+  }).addTo(map), // Default
   "Dark": L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
     attribution: '&copy; OpenStreetMap &copy; CARTO', subdomains: 'abcd', maxZoom: 19
   }),
@@ -21,6 +23,8 @@ const baseLayers = {
     maxZoom: 20, subdomains:['mt0','mt1','mt2','mt3'], attribution: '&copy; Google'
   })
 };
+
+// Add layer control
 L.control.layers(baseLayers).addTo(map);
 
 // --- Global data ---
@@ -29,7 +33,6 @@ const routes = {};
 const trips = {};
 const vehicleMarkers = {};
 
-// --- Layer groups ---
 const layerGroups = {
   bus: L.layerGroup().addTo(map),
   train: L.layerGroup().addTo(map),
@@ -38,20 +41,23 @@ const layerGroups = {
 };
 
 // --- Layer toggles ---
-["bus","train","ferry","other"].forEach(type=>{
-  const checkbox = document.getElementById(type+"-checkbox");
-  if(checkbox){
-    checkbox.addEventListener("change", e=>toggleLayer(type, e.target.checked));
-  }
-});
-function toggleLayer(type, visible){
-  if(visible) map.addLayer(layerGroups[type]);
+document.getElementById("bus-checkbox").addEventListener("change", e => toggleLayer("bus", e.target.checked));
+document.getElementById("train-checkbox").addEventListener("change", e => toggleLayer("train", e.target.checked));
+document.getElementById("ferry-checkbox").addEventListener("change", e => toggleLayer("ferry", e.target.checked));
+document.getElementById("other-checkbox").addEventListener("change", e => toggleLayer("other", e.target.checked));
+
+function toggleLayer(type, visible) {
+  if (visible) map.addLayer(layerGroups[type]);
   else map.removeLayer(layerGroups[type]);
 }
 
 // --- Vehicle styles ---
 const vehicleColors = { 3:"#007bff", 2:"#dc3545", 4:"#ffc107", default:"#6c757d" };
-const occupancyLabels = { 0:"Empty",1:"Many Seats Available",2:"Few Seats Available",3:"Standing Room Only",4:"Crushed Standing Room Only",5:"Full",6:"Not Accepting Passengers" };
+const occupancyLabels = {
+  0:"Empty",1:"Many Seats Available",2:"Few Seats Available",
+  3:"Standing Room Only",4:"Crushed Standing Room Only",5:"Full",6:"Not Accepting Passengers"
+};
+
 const getVehicleIcon = color => L.divIcon({
   className:'vehicle-icon',
   html:`<div style="background-color:${color};width:12px;height:12px;border-radius:50%;border:2px solid white;"></div>`,
@@ -59,7 +65,7 @@ const getVehicleIcon = color => L.divIcon({
   iconAnchor:[8,8]
 });
 
-// --- Safe fetch ---
+// --- Fetch helper ---
 async function safeFetch(url){
   try{
     const res = await fetch(url);
@@ -92,6 +98,7 @@ async function fetchTripById(tripId){
 async function fetchVehicles(){
   const json = await safeFetch(realtimeUrl);
   if(!json) return;
+
   const vehicles = json?.response?.entity || json?.entity || [];
   const newVehicleIds = new Set();
 
@@ -107,6 +114,7 @@ async function fetchVehicles(){
   results.forEach(result=>{
     const [routeInfo, tripInfo, v, vehicleId] = result;
     if(!v.vehicle || !v.vehicle.position || !vehicleId) return;
+
     newVehicleIds.add(vehicleId);
 
     const lat = v.vehicle.position.latitude;
@@ -142,13 +150,14 @@ async function fetchVehicles(){
     const operator = v.vehicle.vehicle?.operator_id || "";
     const vehicleLabelWithOperator = operator+vehicleLabel;
 
-    const popupContent = `\
-<b>Route:</b> ${routeName}<br>\
-<b>Destination:</b> ${destination}<br>\
-<b>Vehicle:</b> ${vehicleLabelWithOperator}<br>\
-<b>Number Plate:</b> ${licensePlate}<br>\
-<b>Speed:</b> ${speed}<br>\
-<b>Occupancy:</b> ${occupancy}`;
+    const popupContent = `
+      <b>Route:</b> ${routeName}<br>
+      <b>Destination:</b> ${destination}<br>
+      <b>Vehicle:</b> ${vehicleLabelWithOperator}<br>
+      <b>Number Plate:</b> ${licensePlate}<br>
+      <b>Speed:</b> ${speed}<br>
+      <b>Occupancy:</b> ${occupancy}
+    `;
 
     if(vehicleMarkers[vehicleId]){
       vehicleMarkers[vehicleId].setLatLng([lat,lon]);
