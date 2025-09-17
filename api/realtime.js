@@ -1,6 +1,6 @@
 export default async function handler(req, res) {
   try {
-    const response = await fetch("https://api.at.govt.nz/v2/public/realtime/vehiclelocations", {
+    const response = await fetch("https://api.at.govt.nz/realtime/legacy", {
       headers: { "Ocp-Apim-Subscription-Key": process.env.AT_API_KEY }
     });
 
