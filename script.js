@@ -233,6 +233,10 @@ function initializeMap() {
 
     // Update vehicle positions every 30 seconds
     setInterval(fetchVehicles, 30000);
+
+     // Initialise the Te Huia simulation
+    initializeTeHuiaSim(map, teHuiaLayer);
 }
 
 initializeMap();
+
