@@ -8,7 +8,7 @@ module.exports = async (req, res) => {
     // --- CORS Configuration ---
     // This allows your GitHub Pages site to access this proxy.
     // Replace YOUR_GITHUB_USERNAME with your actual GitHub username.
-    res.setHeader('Access-Control-Allow-Origin', 'https://atrealtime.github.io');
+    res.setHeader('Access-Control-Allow-Origin', 'https://dazzlingfields.github.io');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
 
