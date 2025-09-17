@@ -170,10 +170,7 @@ async function initializeMap() {
         document.getElementById('ferry-checkbox').addEventListener('change', updateVehicleDisplay);
         document.getElementById('outofservice-checkbox').addEventListener('change', updateVehicleDisplay);
 
-        // Te Huia layer
-        const teHuiaLayer = L.layerGroup().addTo(map);
-        if (typeof initializeTeHuiaSim === 'function') initializeTeHuiaSim(map, teHuiaLayer);
-
+       
         // Fetch vehicles
         fetchVehicles();
         setInterval(fetchVehicles, 30000);
@@ -195,4 +192,5 @@ try {
 
 
 initializeMap();
+
 
