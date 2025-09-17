@@ -59,15 +59,19 @@ const vehicleColors = { 3:"#007bff", 2:"#dc3545", 4:"#ffc107", default:"#6c757d"
 const occupancyLabels = { 0:"Empty",1:"Many Seats Available",2:"Few Seats Available",3:"Standing Room Only",4:"Crushed Standing Room Only",5:"Full",6:"Not Accepting Passengers" };
 const getVehicleIcon = color => L.divIcon({ className:'vehicle-icon', html:`<div style="background-color:${color};width:12px;height:12px;border-radius:50%;border:2px solid white;"></div>`, iconSize:[16,16], iconAnchor:[8,8] });
 
-// --- Safe fetch ---
-async function safeFetch(url){
+// --- Safe fetch with fallback ---
+async function safeFetch(url, fallback=null){
   try{
     const res = await fetch(url);
     if(!res.ok) throw new Error(`Failed fetch: ${res.status}`);
     return await res.json();
   } catch(err){
     console.error(err);
-    debugBox.textContent = `Error fetching data from API`;
+    if(fallback && fallback.debugBoxContent){
+      debugBox.textContent = fallback.debugBoxContent + " | API fetch failed, showing last known data";
+    } else {
+      debugBox.textContent = "Unable to fetch API data, showing last known vehicles";
+    }
     return null;
   }
 }
@@ -75,14 +79,14 @@ async function safeFetch(url){
 // --- Route/Trip caching ---
 async function fetchRouteById(routeId){
   if(routes[routeId]) return routes[routeId];
-  const json = await safeFetch(`${routesUrl}?id=${routeId}`);
+  const json = await safeFetch(`${routesUrl}?id=${routeId}`, {debugBoxContent: debugBox.textContent});
   const routeData = json?.data?.[0]?.attributes || json?.data?.attributes;
   if(routeData){ routes[routeId]=routeData; return routeData; }
   return null;
 }
 async function fetchTripById(tripId){
   if(trips[tripId]) return trips[tripId];
-  const json = await safeFetch(`${tripsUrl}?id=${tripId}`);
+  const json = await safeFetch(`${tripsUrl}?id=${tripId}`, {debugBoxContent: debugBox.textContent});
   const tripData = json?.data?.[0]?.attributes || json?.data?.attributes;
   if(tripData){ trips[tripId]=tripData; return tripData; }
   return null;
@@ -90,7 +94,7 @@ async function fetchTripById(tripId){
 
 // --- Fetch vehicles ---
 async function fetchVehicles(){
-  const json = await safeFetch(realtimeUrl);
+  const json = await safeFetch(realtimeUrl, {debugBoxContent: debugBox.textContent});
   if(!json) return;
   const vehicles = json?.response?.entity || json?.entity || [];
   const newVehicleIds = new Set();
@@ -132,7 +136,6 @@ async function fetchVehicles(){
       routeName = routeInfo.route_short_name||"N/A";
     }
 
-    // Speed sanity
     let speedKmh = v.vehicle.position.speed ? v.vehicle.position.speed*3.6 : null;
     if(speedKmh!==null){
       let maxSpeed = typeKey==="bus"?100:typeKey==="train"?120:typeKey==="ferry"?60:160;
@@ -175,7 +178,7 @@ async function fetchVehicles(){
 
 // --- Train stations ---
 async function fetchTrainStations(){
-  const json = await safeFetch(`${stopsUrl}?filter[route_type]=2`); // route_type 2 = train
+  const json = await safeFetch(`${stopsUrl}?filter[route_type]=2`, {debugBoxContent: debugBox.textContent}); // route_type 2 = train
   if(!json?.data) return;
   json.data.forEach(stop=>{
     const lat = stop.attributes.latitude;
@@ -200,10 +203,9 @@ async function fetchStopDepartures(stopId){
   const today = new Date().toISOString().split('T')[0];
   const nowHour = new Date().getHours();
   const url = `${stopsUrl}/${stopId}/stoptrips?filter[date]=${today}&filter[start_hour]=${nowHour}&filter[hour_range]=2`;
-  const json = await safeFetch(url);
+  const json = await safeFetch(url, {debugBoxContent: debugBox.textContent});
   if(!json?.data) return "No upcoming departures";
 
-  // Sort and take next 2 in each direction
   const departures = json.data.slice(0,4).map(d=>{
     const tripHeadsign = d.attributes.trip_headsign || "N/A";
     const platform = d.attributes.platform_code || "N/A";
