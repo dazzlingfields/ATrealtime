@@ -1,4 +1,4 @@
-// ================== v4.4 - Real-time Vehicle Tracking (with 6-car counter) ==================
+// ================== v4.5 - Real-time Vehicle Tracking (6-car counter heuristic) ==================
 
 // --- API endpoints ---
 const proxyBaseUrl = "https://atrealtime.vercel.app";
@@ -42,7 +42,7 @@ const debugBox = document.getElementById("debug");
 const routes = {};
 const trips = {};
 const vehicleMarkers = {};
-let sixCarCount = 0; // <--- NEW: global counter
+let sixCarCount = 0;
 
 // --- Layer groups ---
 const layerGroups = {
@@ -110,6 +110,16 @@ async function fetchTripById(tripId){
   return null;
 }
 
+// --- Haversine for 6-car detection ---
+function haversine(lat1, lon1, lat2, lon2){
+  const R = 6371000;
+  const toRad = d=>d*Math.PI/180;
+  const dLat = toRad(lat2-lat1);
+  const dLon = toRad(lon2-lon1);
+  const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)**2;
+  return 2*R*Math.asin(Math.sqrt(a));
+}
+
 // --- Fetch vehicles ---
 async function fetchVehicles(){
   const json = await safeFetch(realtimeUrl);
@@ -120,7 +130,10 @@ async function fetchVehicles(){
 
   const vehicles = json?.response?.entity || json?.entity || [];
   const newVehicleIds = new Set();
-  sixCarCount = 0; // reset counter each fetch
+  sixCarCount = 0;
+
+  const trainInService = [];
+  const trainOutOfService = [];
 
   const dataPromises = vehicles.map(v=>{
     const vehicleId = v.vehicle?.vehicle?.id;
@@ -166,20 +179,10 @@ async function fetchVehicles(){
       routeName = routeInfo.route_short_name || "N/A";
     }
 
-    // --- NEW: 6-car detection (simple heuristic) ---
-    let sixCar = false;
-    if(typeKey==="train"){
-      // Example heuristic: vehicle label contains "6" or starts with "6"
-      if(vehicleLabel.includes("6") || licensePlate.includes("6CAR")){
-        sixCar = true;
-        sixCarCount++;
-      }
-    }
-
     // Speed sanity
     let speedKmh = v.vehicle.position.speed ? v.vehicle.position.speed*3.6 : null;
     if(speedKmh!==null){
-      let maxSpeed = typeKey==="bus"?100:typeKey==="train"?120:typeKey==="ferry"?60:160;
+      let maxSpeed = typeKey==="bus"?100:typeKey==="train"?150:typeKey==="ferry"?60:160;
       if(speedKmh>=0 && speedKmh<=maxSpeed) speed = speedKmh.toFixed(1)+" km/h";
     }
 
@@ -192,8 +195,7 @@ async function fetchVehicles(){
       <b>Vehicle:</b> ${vehicleLabelWithOperator}<br>
       <b>Number Plate:</b> ${licensePlate}<br>
       <b>Speed:</b> ${speed}<br>
-      <b>Occupancy:</b> ${occupancy}<br>
-      ${sixCar ? "<b>Consist:</b> 6-car train 🚆" : ""}
+      <b>Occupancy:</b> ${occupancy}
     `;
 
     if(vehicleMarkers[vehicleId]){
@@ -206,6 +208,25 @@ async function fetchVehicles(){
       newMarker.addTo(layerGroups[typeKey]);
       vehicleMarkers[vehicleId]=newMarker;
     }
+
+    // Collect trains for 6-car heuristic
+    if(typeKey==="train"){
+      const inService = !!v.vehicle.trip?.route_id;
+      const trainEntry = {id: vehicleId, lat, lon, speed: speedKmh||0};
+      if(inService) trainInService.push(trainEntry);
+      else trainOutOfService.push(trainEntry);
+    }
+  });
+
+  // --- 6-car detection ---
+  trainInService.forEach(inTrain=>{
+    trainOutOfService.forEach(outTrain=>{
+      const dist = haversine(inTrain.lat, inTrain.lon, outTrain.lat, outTrain.lon);
+      const speedDiff = Math.abs(inTrain.speed - outTrain.speed);
+      if(dist < 200 && speedDiff < 25){
+        sixCarCount++;
+      }
+    });
   });
 
   // Remove old markers
