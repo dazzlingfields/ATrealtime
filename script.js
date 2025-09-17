@@ -1,4 +1,4 @@
-// ================== v4.7 - Real-time Vehicle Tracking (Strict 6-car Counter) ==================
+// ================== v4.8 - Real-time Vehicle Tracking (6-car Indicator) ==================
 
 // --- API endpoints ---
 const proxyBaseUrl = "https://atrealtime.vercel.app";
@@ -17,7 +17,7 @@ const osm = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
 const light = L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", {
   subdomains: "abcd",
   attribution: "© OpenStreetMap contributors © CARTO"
-}).addTo(map); // Default
+}).addTo(map);
 
 const dark = L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
   subdomains: "abcd",
@@ -76,9 +76,12 @@ const occupancyLabels = {
   5:"Full",
   6:"Not Accepting Passengers"
 };
-const getVehicleIcon = color => L.divIcon({
+const getVehicleIcon = (color, sixCar=false) => L.divIcon({
   className:'vehicle-icon',
-  html:`<div style="background-color:${color};width:12px;height:12px;border-radius:50%;border:2px solid white;"></div>`,
+  html:`<div style="position:relative;width:14px;height:14px;">
+          <div style="background-color:${color};width:12px;height:12px;border-radius:50%;border:2px solid white;"></div>
+          ${sixCar ? '<div style="position:absolute;top:-6px;right:-6px;font-size:10px;">🚆</div>' : ''}
+        </div>`,
   iconSize:[16,16],
   iconAnchor:[8,8]
 });
@@ -180,6 +183,7 @@ async function fetchVehicles(){
     }
 
     // --- 6-car detection classification ---
+    let isSixCar = false;
     if(vehicleLabel.includes("AM")){
       if(typeKey==="train") inServiceAMTrains.push({vehicleId, lat, lon});
       else if(typeKey==="other") outOfServiceAMTrains.push({vehicleId, lat, lon});
@@ -200,25 +204,31 @@ async function fetchVehicles(){
     if(vehicleMarkers[vehicleId]){
       vehicleMarkers[vehicleId].setLatLng([lat,lon]);
       vehicleMarkers[vehicleId].setPopupContent(popupContent);
-      vehicleMarkers[vehicleId].setIcon(getVehicleIcon(color));
+      vehicleMarkers[vehicleId].setIcon(getVehicleIcon(color, false)); // updated later
     } else {
-      const newMarker = L.marker([lat,lon],{icon:getVehicleIcon(color)});
+      const newMarker = L.marker([lat,lon],{icon:getVehicleIcon(color, false)});
       newMarker.bindPopup(popupContent);
       newMarker.addTo(layerGroups[typeKey]);
       vehicleMarkers[vehicleId]=newMarker;
     }
   });
 
-  // --- Compute 6-car trains: exactly one in-service AM + one out-of-service AM pair ---
-  if(inServiceAMTrains.length > 0 && outOfServiceAMTrains.length > 0){
-    inServiceAMTrains.forEach(inTrain=>{
-      outOfServiceAMTrains.forEach(outTrain=>{
-        const distance = map.distance([inTrain.lat, inTrain.lon],[outTrain.lat, outTrain.lon]);
-        if(distance < 150) sixCarCount++; // pair within 150 meters counts as 1
-      });
+  // --- Compute 6-car trains ---
+  const pairedSixCars = Math.min(inServiceAMTrains.length, outOfServiceAMTrains.length);
+  sixCarCount = pairedSixCars;
+
+  // Mark paired 6-car trains with indicator
+  for(let i=0; i<pairedSixCars; i++){
+    const inTrain = inServiceAMTrains[i];
+    const outTrain = outOfServiceAMTrains[i];
+    [inTrain.vehicleId, outTrain.vehicleId].forEach(id=>{
+      const marker = vehicleMarkers[id];
+      if(marker){
+        const currentLatLng = marker.getLatLng();
+        marker.setIcon(getVehicleIcon(vehicleColors[2], true));
+        marker.setPopupContent(marker.getPopup().getContent() + "<br><b>Consist:</b> 6-car train 🚆");
+      }
     });
-    // Ensure each pair counts as only 1
-    sixCarCount = Math.min(inServiceAMTrains.length, outOfServiceAMTrains.length);
   }
 
   // Remove old markers
