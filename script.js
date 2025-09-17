@@ -1,9 +1,10 @@
-// Version 3.1
-// --- API Key and Endpoints ---
-const atApiKey = "18e2ee8ee75d4e6ca7bd446ffa9bd50f";
-const realtimeUrl = "https://api.at.govt.nz/realtime/legacy";
-const routesUrl = "https://api.at.govt.nz/gtfs/v3/routes";
-const tripsUrl = "https://api.at.govt.nz/gtfs/v3/trips";
+// Version 3.2
+// --- API Endpoints ---
+// Using a proxy to hide the API key.
+// The proxy will be deployed to a serverless function.
+const realtimeUrl = "/api/realtime";
+const routesUrl = "/api/routes";
+const tripsUrl = "/api/trips";
 
 // --- Set up the Map ---
 const map = L.map("map").setView([-36.8485, 174.7633], 13);
@@ -70,9 +71,7 @@ async function fetchRouteById(routeId) {
     }
     
     try {
-        const res = await fetch(`${routesUrl}/${routeId}`, {
-            headers: { "Ocp-Apim-Subscription-Key": atApiKey }
-        });
+        const res = await fetch(`${routesUrl}/${routeId}`);
         if (!res.ok) {
             console.error(`Failed to fetch route ${routeId}: ${res.status} ${res.statusText}`);
             return null;
@@ -97,9 +96,7 @@ async function fetchTripById(tripId) {
     }
 
     try {
-        const res = await fetch(`${tripsUrl}/${tripId}`, {
-            headers: { "Ocp-Apim-Subscription-Key": atApiKey }
-        });
+        const res = await fetch(`${tripsUrl}/${tripId}`);
         if (!res.ok) {
             console.error(`Failed to fetch trip ${tripId}: ${res.status} ${res.statusText}`);
             return null;
@@ -121,9 +118,7 @@ async function fetchTripById(tripId) {
 // --- Main Loop: Fetch and Display Real-time Vehicle Data ---
 async function fetchVehicles() {
     try {
-        const res = await fetch(realtimeUrl, {
-            headers: { "Ocp-Apim-Subscription-Key": atApiKey }
-        });
+        const res = await fetch(realtimeUrl);
         if (!res.ok) {
             throw new Error(`Failed to fetch vehicles: ${res.status} ${res.statusText}`);
         }
@@ -245,12 +240,6 @@ async function fetchVehicles() {
 
 // Initial fetch and set interval for updates
 (async function init() {
-    // This is the old way, but since there is no `routes.txt` file in the GTFS data,
-    // this will fail. The `fetchVehicles` function should handle fetching the routes
-    // on a per-vehicle basis as needed. We'll disable this for now.
-    // await fetchRoutes(); 
-    
-    // Start fetching real-time data
     fetchVehicles();
     setInterval(fetchVehicles, 15000);
 })();
