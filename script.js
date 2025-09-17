@@ -1,4 +1,4 @@
-// ================== v4.6 - Real-time Vehicle Tracking (Separate 6-car Counter) ==================
+// ================== v4.7 - Real-time Vehicle Tracking (Strict 6-car Counter) ==================
 
 // --- API endpoints ---
 const proxyBaseUrl = "https://atrealtime.vercel.app";
@@ -39,7 +39,7 @@ L.control.layers(baseMaps).addTo(map);
 
 // --- Globals ---
 const debugBox = document.getElementById("debug");
-const sixCarBox = document.getElementById("sixCarCounter"); // separate counter display
+const sixCarBox = document.getElementById("sixCarCounter");
 const routes = {};
 const trips = {};
 const vehicleMarkers = {};
@@ -138,6 +138,7 @@ async function fetchVehicles(){
 
   const results = await Promise.all(dataPromises);
 
+  // Separate AM trains
   const inServiceAMTrains = [];
   const outOfServiceAMTrains = [];
 
@@ -171,14 +172,14 @@ async function fetchVehicles(){
       routeName = routeInfo.route_short_name || "N/A";
     }
 
-    // Speed sanity with higher tolerance
+    // Speed sanity
     let speedKmh = v.vehicle.position.speed ? v.vehicle.position.speed*3.6 : null;
     if(speedKmh!==null){
       let maxSpeed = typeKey==="bus"?150:typeKey==="train"?200:typeKey==="ferry"?120:250;
       if(speedKmh>=0 && speedKmh<=maxSpeed) speed = speedKmh.toFixed(1)+" km/h";
     }
 
-    // Classify for 6-car detection
+    // --- 6-car detection classification ---
     if(vehicleLabel.includes("AM")){
       if(typeKey==="train") inServiceAMTrains.push({vehicleId, lat, lon});
       else if(typeKey==="other") outOfServiceAMTrains.push({vehicleId, lat, lon});
@@ -208,13 +209,17 @@ async function fetchVehicles(){
     }
   });
 
-  // Compute 6-car trains
-  inServiceAMTrains.forEach(inTrain=>{
-    outOfServiceAMTrains.forEach(outTrain=>{
-      const distance = map.distance([inTrain.lat, inTrain.lon],[outTrain.lat, outTrain.lon]);
-      if(distance < 150) sixCarCount++;
+  // --- Compute 6-car trains: exactly one in-service AM + one out-of-service AM pair ---
+  if(inServiceAMTrains.length > 0 && outOfServiceAMTrains.length > 0){
+    inServiceAMTrains.forEach(inTrain=>{
+      outOfServiceAMTrains.forEach(outTrain=>{
+        const distance = map.distance([inTrain.lat, inTrain.lon],[outTrain.lat, outTrain.lon]);
+        if(distance < 150) sixCarCount++; // pair within 150 meters counts as 1
+      });
     });
-  });
+    // Ensure each pair counts as only 1
+    sixCarCount = Math.min(inServiceAMTrains.length, outOfServiceAMTrains.length);
+  }
 
   // Remove old markers
   Object.keys(vehicleMarkers).forEach(id=>{
