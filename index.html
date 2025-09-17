@@ -3,74 +3,44 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AT Realtime Map</title>
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
+    <title>Auckland Bus Tracker</title>
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4xn+LwT9fE+2Q7bTf75B6sD775A775Wb5C5sJ6A775c=" crossorigin="" />
     <style>
         body {
             font-family: Arial, sans-serif;
             margin: 0;
             padding: 0;
         }
+
         #map {
+            width: 100%;
             height: 100vh;
-            width: 100vw;
         }
-        #controls {
+
+        .info-box {
             position: absolute;
             top: 10px;
             left: 10px;
-            z-index: 1000;
-            background: rgba(255, 255, 255, 0.8);
-            padding: 15px;
+            padding: 10px;
+            background-color: white;
             border-radius: 8px;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-            max-width: 250px;
-        }
-        .control-group {
-            margin-bottom: 15px;
-        }
-        .control-group h4 {
-            margin-top: 0;
-            margin-bottom: 8px;
-            font-size: 1.1em;
-            color: #333;
-        }
-        .control-group label {
-            display: block;
-            margin-bottom: 5px;
-            font-size: 0.9em;
-            color: #555;
-            cursor: pointer;
-        }
-        #debug {
-            font-family: monospace;
-            font-size: 0.8em;
-            color: #777;
-            margin-top: 10px;
-        }
-        /* Style for the custom vehicle icon */
-        .vehicle-icon {
-            text-align: center;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+            z-index: 1000;
         }
     </style>
 </head>
 <body>
-
-<div id="map"></div>
-
-<div id="controls">
-    <div class="control-group">
-        <h4>Vehicle Display</h4>
-        <label><input type="checkbox" id="bus-checkbox" checked> Buses</label>
-        <label><input type="checkbox" id="train-checkbox" checked> Trains</label>
-        <label><input type="checkbox" id="ferry-checkbox" checked> Ferries</label>
-        <label><input type="checkbox" id="other-checkbox" checked> Other</label>
+    <div id="map"></div>
+    <div class="info-box">
+        <h1>Auckland Bus Tracker</h1>
+        <p id="status-message">Loading...</p>
     </div>
-    <div id="debug">Waiting for data...</div>
-</div>
 
-<script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
-<script src="script.js"></script>
-
+    <!-- Leaflet JavaScript -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-2B1u8sB6tY1GjG+2kCg1yQ9e4T79eW9f+e3D5f+2p1S=" crossorigin=""></script>
+    <script src="script.js"></script>
 </body>
 </html>
