@@ -1,4 +1,5 @@
-// v2.2 updated
+// Version 1.1
+// --- API Key and Endpoints ---
 const atApiKey = "18e2ee8ee75d4e6ca7bd446ffa9bd50f";
 const realtimeUrl = "https://api.at.govt.nz/realtime/legacy";
 const routesUrl = "https://api.at.govt.nz/gtfs/v3/routes";
@@ -186,6 +187,8 @@ async function fetchVehicles() {
         // Clear previous markers from all layer groups
         Object.values(layerGroups).forEach(group => group.clearLayers());
         
+        // Use a Set to store promises for routes we've already requested in this loop
+        const requestedRoutes = new Set();
         const dataPromises = vehicles.map(v => {
             const routeId = v.vehicle?.trip?.route_id;
             const tripId = v.vehicle?.trip?.trip_id;
@@ -194,8 +197,13 @@ async function fetchVehicles() {
             const routeShortNameMatch = routeId?.match(/^([a-zA-Z0-9]+)/);
             const routeShortName = routeShortNameMatch ? routeShortNameMatch[1] : null;
 
+            // Only fetch the route if we haven't already requested it this cycle
+            const routePromise = routeShortName && !requestedRoutes.has(routeShortName)
+                ? fetchRouteByShortName(routeShortName).finally(() => requestedRoutes.add(routeShortName))
+                : Promise.resolve(routes[routeShortName] || null);
+            
             return Promise.all([
-                routeShortName ? fetchRouteByShortName(routeShortName) : null,
+                routePromise,
                 tripId ? fetchTripById(tripId) : null,
             ]);
         });
@@ -219,7 +227,7 @@ async function fetchVehicles() {
             let routeName = "Unknown";
             
             // New, more robust logic for vehicle classification and status
-            if (tripInfo && routeInfo) {
+            if (routeInfo) {
                 // Primary classification: Vehicle is in service, use GTFS data
                 const routeType = routeInfo.route_type;
                 switch (routeType) {
