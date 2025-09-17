@@ -2,9 +2,10 @@
 // --- API Endpoints ---
 // Using a proxy to hide the API key.
 // The proxy will be deployed to a serverless function.
-const realtimeUrl = "/api/realtime";
-const routesUrl = "/api/routes";
-const tripsUrl = "/api/trips";
+const proxyBaseUrl = "https://atrealtime.vercel.app";
+const realtimeUrl = `${proxyBaseUrl}/api/realtime`;
+const routesUrl = `${proxyBaseUrl}/api/routes`;
+const tripsUrl = `${proxyBaseUrl}/api/trips`;
 
 // --- Set up the Map ---
 const map = L.map("map").setView([-36.8485, 174.7633], 13);
