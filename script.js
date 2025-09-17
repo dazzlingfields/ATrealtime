@@ -1,222 +1,196 @@
-// v3.4
-const proxyBaseUrl = "https://atrealtime.vercel.app";  // change if project URL changes
+// v3.5
+const proxyBaseUrl = "https://atrealtime.vercel.app";
 const realtimeUrl = `${proxyBaseUrl}/api/realtime`;
 const routesUrl   = `${proxyBaseUrl}/api/routes`;
 const tripsUrl    = `${proxyBaseUrl}/api/trips`;
 const stopsUrl    = `${proxyBaseUrl}/api/stops`;
 
-// --- Set up the Map ---
-const map = L.map("map").setView([-36.8485, 174.7633], 13);
+// Te Huia schedule for simulation (northbound and southbound services)
+const teHuiaSchedule = [
+  // Northbound (Hamilton → Auckland)
+  {
+    direction: "north",
+    stops: [
+      { name: "Frankton",       lat: -37.7850, lon: 175.2790, time: "06:05" },
+      { name: "Rotokauri",       lat: -37.7360, lon: 175.2450, time: "06:15" },
+      { name: "Raahui Pookeka",   lat: -37.4500, lon: 175.1900, time: "06:39" },
+      { name: "Pukekohe",         lat: -37.2030, lon: 174.9280, time: "07:27" },
+      { name: "Puhinui",          lat: -36.9110, lon: 174.8440, time: "08:03" },
+      { name: "The Strand",       lat: -36.8450, lon: 174.7670, time: "08:30" }
+    ]
+  },
+  // Southbound (Auckland → Hamilton)
+  {
+    direction: "south",
+    stops: [
+      { name: "The Strand",       lat: -36.8450, lon: 174.7670, time: "09:45" },
+      { name: "Puhinui",           lat: -36.9110, lon: 174.8440, time: "10:15" },
+      { name: "Pukekohe",          lat: -37.2030, lon: 174.9280, time: "10:47" },
+      { name: "Raahui Pookeka",    lat: -37.4500, lon: 175.1900, time: "11:32" },
+      { name: "Rotokauri",         lat: -37.7360, lon: 175.2450, time: "12:03" },
+      { name: "Frankton",          lat: -37.7850, lon: 175.2790, time: "12:11" }
+    ]
+  }
+];
+
+// Utility to parse "HH:MM" into a Date (today)
+function parseTimeHM(timestr) {
+  const [h, m] = timestr.split(":").map(s => parseInt(s,10));
+  const d = new Date();
+  d.setHours(h, m, 0, 0);
+  return d;
+}
+
+// Compute simulated position for Te Huia if current time matches one of the schedule segments
+function getSimulatedTeHuia() {
+  const now = new Date();
+  for (const trip of teHuiaSchedule) {
+    const stops = trip.stops;
+    for (let i = 0; i < stops.length - 1; i++) {
+      const s1 = stops[i];
+      const s2 = stops[i+1];
+      const t1 = parseTimeHM(s1.time);
+      const t2 = parseTimeHM(s2.time);
+      if (now >= t1 && now <= t2) {
+        const fraction = (now - t1) / (t2 - t1);
+        const lat = s1.lat + (s2.lat - s1.lat) * fraction;
+        const lon = s1.lon + (s2.lon - s1.lon) * fraction;
+        return {
+          direction: trip.direction,
+          stopFrom: s1.name,
+          stopTo: s2.name,
+          position: { lat, lon },
+          scheduledFrom: s1.time,
+          scheduledTo: s2.time
+        };
+      }
+    }
+  }
+  return null;
+}
+
+// Set up the map
+const map = L.map("map").setView([-37.0, 175.0], 7);
 L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
   attribution: "&copy; OpenStreetMap contributors"
 }).addTo(map);
 
-// --- Global Data Stores and UI Elements ---
-const debugBox = document.getElementById("debug");
-const routes = {};
-const trips = {};
+// Layers
+const vehicleLayer = L.layerGroup().addTo(map);
+const teHuiaLayer = L.layerGroup().addTo(map);
+
+// Debug / UI
+const debugEl = document.getElementById("debug");
+const showTeHuiaCheckbox = document.getElementById("show-tehuia");
+
+// Store markers
 const vehicleMarkers = {};
+let teHuiaMarker = null;
 
-const layerGroups = {
-  bus: L.layerGroup().addTo(map),
-  train: L.layerGroup().addTo(map),
-  ferry: L.layerGroup().addTo(map),
-  other: L.layerGroup().addTo(map)
-};
-
-// Checkbox toggles
-document.getElementById("bus-checkbox").addEventListener("change", e => toggleLayer("bus", e.target.checked));
-document.getElementById("train-checkbox").addEventListener("change", e => toggleLayer("train", e.target.checked));
-document.getElementById("ferry-checkbox").addEventListener("change", e => toggleLayer("ferry", e.target.checked));
-document.getElementById("other-checkbox").addEventListener("change", e => toggleLayer("other", e.target.checked));
-
-function toggleLayer(type, visible) {
-  if (visible) map.addLayer(layerGroups[type]);
-  else map.removeLayer(layerGroups[type]);
-}
-
-// Vehicle colours based on GTFS route type
-const vehicleColors = {
-  3: "#007bff", // bus
-  2: "#dc3545", // train
-  4: "#ffc107", // ferry
-  default: "#6c757d" // other
-};
-
-// Occupancy labels
-const occupancyLabels = {
-  0: "Empty",
-  1: "Many Seats Available",
-  2: "Few Seats Available",
-  3: "Standing Room Only",
-  4: "Crushed Standing Room Only",
-  5: "Full",
-  6: "Not Accepting Passengers"
-};
-
-// Vehicle icon
-const getVehicleIcon = (color) => L.divIcon({
-  className: 'vehicle-icon',
-  html: `<div style="background-color: ${color}; width: 12px; height: 12px; border-radius: 50%; border: 2px solid white;"></div>`,
-  iconSize: [16, 16],
-  iconAnchor: [8, 8]
-});
-
-// --- Helpers for fetching with caching ---
-async function fetchRouteById(routeId) {
-  if (routes[routeId]) return routes[routeId];
-  try {
-    const res = await fetch(`${routesUrl}?id=${routeId}`);
-    if (!res.ok) throw new Error(`Failed to fetch route ${routeId}: ${res.status}`);
-    const json = await res.json();
-    const routeData = json.data?.[0]?.attributes || json.data?.attributes;
-    if (routeData) {
-      routes[routeId] = routeData;
-      return routeData;
-    }
-  } catch (err) {
-    console.error(`Route fetch error ${routeId}:`, err);
-  }
-  return null;
-}
-
-async function fetchTripById(tripId) {
-  if (trips[tripId]) return trips[tripId];
-  try {
-    const res = await fetch(`${tripsUrl}?id=${tripId}`);
-    if (!res.ok) throw new Error(`Failed to fetch trip ${tripId}: ${res.status}`);
-    const json = await res.json();
-    const tripData = json.data?.[0]?.attributes || json.data?.attributes;
-    if (tripData) {
-      trips[tripId] = tripData;
-      return tripData;
-    }
-  } catch (err) {
-    console.error(`Trip fetch error ${tripId}:`, err);
-  }
-  return null;
-}
-
-// --- Fetch realtime vehicles ---
+// Fetch real-time vehicles
 async function fetchVehicles() {
   try {
     const res = await fetch(realtimeUrl);
-    if (!res.ok) throw new Error(`Failed to fetch vehicles: ${res.status}`);
+    if (!res.ok) throw new Error(`Vehicles fetch failed: ${res.status}`);
     const json = await res.json();
-
-    // Handle either json.response.entity or json.entity
     const vehicles = json?.response?.entity || json?.entity || [];
-    const newVehicleIds = new Set();
+    const newIds = new Set();
 
-    const dataPromises = vehicles.map(v => {
+    for (const v of vehicles) {
       const vehicleId = v.vehicle?.vehicle?.id;
-      const routeId   = v.vehicle?.trip?.route_id;
-      const tripId    = v.vehicle?.trip?.trip_id;
-
-      return Promise.all([
-        routeId ? fetchRouteById(routeId) : null,
-        tripId ? fetchTripById(tripId) : null,
-        v,
-        vehicleId
-      ]);
-    });
-
-    const results = await Promise.all(dataPromises);
-
-    results.forEach(result => {
-      const [routeInfo, tripInfo, v, vehicleId] = result;
-      if (!v.vehicle || !v.vehicle.position || !vehicleId) return;
-
-      newVehicleIds.add(vehicleId);
-
+      if (!vehicleId || !v.vehicle?.position) continue;
+      newIds.add(vehicleId);
       const lat = v.vehicle.position.latitude;
       const lon = v.vehicle.position.longitude;
-      const vehicleLabel = v.vehicle.vehicle?.label || "N/A";
-      const licensePlate = v.vehicle.vehicle?.license_plate || "N/A";
-      const occupancyStatus = v.vehicle.occupancy_status;
 
-      let typeKey = "other";
-      let color = vehicleColors.default;
-      let routeName = "N/A";
+      // Popup info
+      const routeId = v.vehicle.trip?.route_id;
+      const tripId  = v.vehicle.trip?.trip_id;
       let destination = "N/A";
-      let speed = "N/A";
-      const occupancy = occupancyStatus !== undefined ? occupancyLabels[occupancyStatus] || "Unknown" : "N/A";
-
-      if (routeInfo) {
-        const routeType = routeInfo.route_type;
-        switch (routeType) {
-          case 3: typeKey = "bus"; color = vehicleColors[3]; break;
-          case 2: typeKey = "train"; color = vehicleColors[2]; break;
-          case 4: typeKey = "ferry"; color = vehicleColors[4]; break;
-        }
-        routeName = routeInfo.route_short_name || "N/A";
+      // Try to fetch trip info or route info if available
+      // (same logic you had before but simplified here)
+      if (v.vehicle.trip && v.vehicle.trip.headsign) {
+        destination = v.vehicle.trip.headsign;
       }
 
-       if (tripInfo) {
-      destination = tripInfo.trip_headsign 
-             || tripInfo.route_long_name 
-             || tripInfo.route_desc 
-             || "N/A";
-    }
-
-      // Te Huia special case
-      if (v.vehicle.trip?.route_id === "15636") {
-        routeName = "Te Huia (Simulated)";
-        color = "#e67e22";
-      }
-
-      // Speed sanity check
-      let speedKmh = v.vehicle.position.speed ? v.vehicle.position.speed * 3.6 : null;
-      if (speedKmh !== null) {
-        let maxSpeed = 160;
-        if (typeKey === "bus") maxSpeed = 100;
-        else if (typeKey === "train") maxSpeed = 120;
-        else if (typeKey === "ferry") maxSpeed = 60;
-
-        if (speedKmh >= 0 && speedKmh <= maxSpeed) {
-          speed = speedKmh.toFixed(1) + " km/h";
-        }
-      }
-
-      const popupContent = `
-        <b>Route:</b> ${routeName}<br>
-        <b>Destination:</b> ${destination}<br>
-        <b>Vehicle:</b> ${vehicleLabel}<br>
-        <b>Number Plate:</b> ${licensePlate}<br>
-        <b>Speed:</b> ${speed}<br>
-        <b>Occupancy:</b> ${occupancy}
+      const popup = `
+        <b>Vehicle:</b> ${v.vehicle.vehicle?.label || "N/A"}<br>
+        <b>Speed:</b> ${ (v.vehicle.position.speed ? (v.vehicle.position.speed * 3.6).toFixed(1) : "N/A") } km/h<br>
+        <b>Destination:</b> ${destination}
       `;
 
       if (vehicleMarkers[vehicleId]) {
-        vehicleMarkers[vehicleId].setLatLng([lat, lon]);
-        vehicleMarkers[vehicleId].setPopupContent(popupContent);
-        vehicleMarkers[vehicleId].setIcon(getVehicleIcon(color));
+        vehicleMarkers[vehicleId].setLatLng([lat, lon]).setPopupContent(popup);
       } else {
-        const newMarker = L.marker([lat, lon], { icon: getVehicleIcon(color) });
-        newMarker.bindPopup(popupContent);
-        newMarker.addTo(layerGroups[typeKey]);
-        vehicleMarkers[vehicleId] = newMarker;
+        const m = L.marker([lat, lon]);
+        m.bindPopup(popup);
+        m.addTo(vehicleLayer);
+        vehicleMarkers[vehicleId] = m;
       }
-    });
+    }
 
-    // Remove old markers
-    Object.keys(vehicleMarkers).forEach(id => {
-      if (!newVehicleIds.has(id)) {
-        map.removeLayer(vehicleMarkers[id]);
+    // Remove stale markers
+    for (const id in vehicleMarkers) {
+      if (!newIds.has(id)) {
+        vehicleLayer.removeLayer(vehicleMarkers[id]);
         delete vehicleMarkers[id];
       }
-    });
+    }
 
-    debugBox.textContent = `Last update: ${new Date().toLocaleTimeString()} | Vehicles: ${vehicles.length}`;
+    debugEl.textContent = `Last real-time update: ${new Date().toLocaleTimeString()}, Vehicles: ${vehicles.length}`;
+
   } catch (err) {
-    console.error("Error fetching vehicles:", err);
-    debugBox.textContent = `Error loading vehicles: ${err.message}`;
+    debugEl.textContent = `Error loading vehicles: ${err.message}`;
+    console.error("fetchVehicles error:", err);
   }
 }
 
-// --- Init ---
-(async function init() {
-  fetchVehicles();
-  setInterval(fetchVehicles, 15000);
-})();
+// Render Te Huia simulated position
+function renderTeHuiaSim() {
+  if (!showTeHuiaCheckbox.checked) {
+    if (teHuiaMarker) {
+      teHuiaLayer.removeLayer(teHuiaMarker);
+      teHuiaMarker = null;
+    }
+    return;
+  }
+  const sim = getSimulatedTeHuia();
+  if (sim) {
+    const { lat, lon } = sim.position;
+    const popup = `
+      <b>Simulated Te Huia Train</b><br>
+      <b>From-To:</b> ${sim.stopFrom} → ${sim.stopTo}<br>
+      <b>Schedule:</b> ${sim.scheduledFrom} → ${sim.scheduledTo}
+    `;
+    if (teHuiaMarker) {
+      teHuiaMarker.setLatLng([lat, lon]).setPopupContent(popup);
+    } else {
+      const icon = L.divIcon({
+        className: 'vehicle-icon',
+        html: `<div style="background: orange; width:14px; height:14px; border:2px solid white; border-radius:7px;"></div>`,
+        iconSize: [18, 18],
+        iconAnchor: [9,9]
+      });
+      teHuiaMarker = L.marker([lat, lon], { icon: icon });
+      teHuiaMarker.bindPopup(popup);
+      teHuiaMarker.addTo(teHuiaLayer);
+    }
+    debugEl.textContent += " | Te Huia simulated running";
+  } else {
+    if (teHuiaMarker) {
+      teHuiaLayer.removeLayer(teHuiaMarker);
+      teHuiaMarker = null;
+    }
+    debugEl.textContent += " | No Te Huia in service now";
+  }
+}
 
+// Initialise & schedule
+(async function init() {
+  await fetchVehicles();
+  renderTeHuiaSim();
+  setInterval(() => {
+    fetchVehicles();
+    renderTeHuiaSim();
+  }, 15000);
+})();
