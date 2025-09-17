@@ -1,4 +1,4 @@
-// ================== v4.5 - Real-time Vehicle Tracking (AM Pairing, 6-car count) ==================
+// ================== v4.5 - Real-time Vehicle Tracking (AM Pairing, 6-car count with pairs box) ==================
 
 // --- API endpoints ---
 const proxyBaseUrl = "https://atrealtime.vercel.app";
@@ -32,6 +32,7 @@ L.control.layers(baseMaps).addTo(map);
 // --- Globals ---
 const debugBox = document.getElementById("debug");
 const sixCarCounterBox = document.getElementById("sixcar-counter");
+const sixCarPairsBox = document.getElementById("sixcar-pairs"); // <--- new box
 const routes = {};
 const trips = {};
 const vehicleMarkers = {};
@@ -200,6 +201,7 @@ async function fetchVehicles(){
       routeName = routeInfo.route_short_name || "N/A";
     }
 
+    // Classify AM trains
     if(vehicleLabel.startsWith("AM")){
       if(typeKey==="train") inServiceAMTrains.push({vehicleId, lat, lon, speedKmh, vehicleLabel});
       else outOfServiceAMTrains.push({vehicleId, lat, lon, speedKmh, vehicleLabel});
@@ -252,8 +254,10 @@ async function fetchVehicles(){
     }
   });
 
+  // Update debug and 6-car boxes
   debugBox.textContent = `Last update: ${new Date().toLocaleTimeString()} | Vehicles: ${vehicles.length}`;
   sixCarCounterBox.textContent = `6-car trains: ${sixCarCount}`;
+  sixCarPairsBox.textContent = `6-car pairs: ${pairs.length}`;
 }
 
 // --- Init ---
