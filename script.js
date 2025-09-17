@@ -1,4 +1,4 @@
-// ================== v4.5 - Real-time Vehicle Tracking (6-car pairing) ==================
+// ================== v4.6 - Real-time Vehicle Tracking (Paired AM Trains) ==================
 
 // --- API endpoints ---
 const proxyBaseUrl = "https://atrealtime.vercel.app";
@@ -93,7 +93,7 @@ async function fetchVehicles(){
   const inServiceAMTrains = [];
   const outOfServiceAMTrains = [];
 
-  // First pass: build train lists
+  // First pass: classify AM trains
   results.forEach(result=>{
     const [routeInfo, tripInfo, v, vehicleId] = result;
     if(!v.vehicle || !v.vehicle.position || !vehicleId) return;
@@ -125,13 +125,13 @@ async function fetchVehicles(){
       if(speedKmh>=0 && speedKmh<=maxSpeed) speed = speedKmh.toFixed(1)+" km/h";
     }
 
-    // Store AM trains for pairing
+    // Track AM trains for pairing
     if(vehicleLabel.includes("AM")){
-      if(typeKey==="train") inServiceAMTrains.push({vehicleId, lat, lon});
-      else outOfServiceAMTrains.push({vehicleId, lat, lon});
+      if(typeKey==="train") inServiceAMTrains.push({vehicleId, vehicleLabel});
+      else outOfServiceAMTrains.push({vehicleId, vehicleLabel});
     }
 
-    // Render marker
+    // Render marker without 6-car indicator
     const operator = v.vehicle.vehicle?.operator_id || "";
     const vehicleLabelWithOperator = operator+vehicleLabel;
     const popupContent = `<b>Route:</b> ${routeName}<br><b>Destination:</b> ${destination}<br><b>Vehicle:</b> ${vehicleLabelWithOperator}<br><b>Number Plate:</b> ${licensePlate}<br><b>Speed:</b> ${speed}<br><b>Occupancy:</b> ${occupancy}`;
@@ -148,20 +148,19 @@ async function fetchVehicles(){
     }
   });
 
-  // Pair 6-car trains: one in-service AM + one out-of-service AM
-  const pairedSixCars = Math.min(inServiceAMTrains.length, outOfServiceAMTrains.length);
-  sixCarCount = pairedSixCars;
-  for(let i=0;i<pairedSixCars;i++){
-    const inTrain = inServiceAMTrains[i];
-    const outTrain = outOfServiceAMTrains[i];
-    [inTrain.vehicleId, outTrain.vehicleId].forEach(id=>{
-      const marker = vehicleMarkers[id];
-      if(marker){
-        const oldContent = marker.getPopup().getContent();
-        marker.setPopupContent(oldContent + "<br><b>Consist:</b> 6-car train 🚆");
-      }
-    });
+ // Pair AM trains: add "Paired to AMXXX" to in-service popups
+const pairedCount = Math.min(inServiceAMTrains.length, outOfServiceAMTrains.length);
+sixCarCount = pairedCount;
+for(let i=0;i<pairedCount;i++){
+  const inTrain = inServiceAMTrains[i];
+  const outTrain = outOfServiceAMTrains[i];
+  const marker = vehicleMarkers[inTrain.vehicleId];
+  if(marker){
+    const oldContent = marker.getPopup().getContent();
+    marker.setPopupContent(oldContent + `<br><b>Paired to:</b> ${outTrain.vehicleLabel}`);
   }
+}
+
 
   // Remove old markers
   Object.keys(vehicleMarkers).forEach(id=>{
@@ -173,7 +172,7 @@ async function fetchVehicles(){
 
   // Update displays
   debugBox.textContent = `Last update: ${new Date().toLocaleTimeString()} | Vehicles: ${vehicles.length}`;
-  if(sixCarBox) sixCarBox.textContent = `6-car trains: ${sixCarCount}`;
+  if(sixCarBox) sixCarBox.textContent = `Paired AM trains: ${sixCarCount}`;
 }
 
 // --- Init ---
