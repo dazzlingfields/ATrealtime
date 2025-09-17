@@ -1,130 +1,76 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>AT Realtime Map</title>
-    <meta charset="utf-8" />
+    <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
-    <!-- Leaflet CSS -->
+    <title>AT Realtime Map</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
-
     <style>
-        body, html, #map {
-            width: 100%;
-            height: 100%;
+        body {
+            font-family: Arial, sans-serif;
             margin: 0;
             padding: 0;
-            font-family: Arial, Helvetica, sans-serif;
         }
-
-        #title {
+        #map {
+            height: 100vh;
+            width: 100vw;
+        }
+        #controls {
             position: absolute;
             top: 10px;
-            left: 0;
-            right: 0;
-            margin: auto;
-            z-index: 1000;
-            width: 500px;
-            max-width: 90%;
-            text-align: center;
-            color: white;
-            border-radius: 5px;
-            padding: 10px;
-            background-color: rgba(0, 0, 0, 0.8);
-            font-size: 1.5rem;
-            text-shadow: 2px 2px #000000;
-            font-weight: bold;
-        }
-
-        #vehicle-controls {
-            position: absolute;
-            top: 80px;
             left: 10px;
             z-index: 1000;
-            background: rgba(0,0,0,0.7);
-            color: #fff;
+            background: rgba(255, 255, 255, 0.8);
             padding: 15px;
             border-radius: 8px;
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            max-width: 250px;
         }
-        
-        #map-controls {
-            position: absolute;
-            top: 80px;
-            right: 10px;
-            z-index: 1000;
-            background: rgba(0,0,0,0.7);
-            color: #fff;
-            padding: 15px;
-            border-radius: 8px;
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
+        .control-group {
+            margin-bottom: 15px;
         }
-
-        #vehicle-controls h4, #map-controls h4 {
-            margin: 0 0 5px 0;
-            padding-bottom: 5px;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.3);
+        .control-group h4 {
+            margin-top: 0;
+            margin-bottom: 8px;
+            font-size: 1.1em;
+            color: #333;
         }
-
-        #vehicle-controls label, #map-controls label {
-            display: flex;
-            align-items: center;
-            gap: 10px;
+        .control-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-size: 0.9em;
+            color: #555;
             cursor: pointer;
         }
-        
-        select {
-            background-color: #333;
-            color: #fff;
-            border: 1px solid #555;
-            padding: 5px;
-            border-radius: 4px;
-        }
-
         #debug {
-            position: absolute;
-            bottom: 10px;
-            left: 10px;
-            background: rgba(0,0,0,0.7);
-            color: #fff;
-            padding: 6px 10px;
-            font-size: 0.9rem;
-            border-radius: 5px;
-            z-index: 1000;
+            font-family: monospace;
+            font-size: 0.8em;
+            color: #777;
+            margin-top: 10px;
+        }
+        /* Style for the custom vehicle icon */
+        .vehicle-icon {
+            text-align: center;
         }
     </style>
 </head>
 <body>
-    <h1 id="title">AT Realtime Map</h1>
 
-    <div id="vehicle-controls">
-        <h4>Vehicle Types</h4>
+<div id="map"></div>
+
+<div id="controls">
+    <div class="control-group">
+        <h4>Vehicle Display</h4>
         <label><input type="checkbox" id="bus-checkbox" checked> Buses</label>
         <label><input type="checkbox" id="train-checkbox" checked> Trains</label>
         <label><input type="checkbox" id="ferry-checkbox" checked> Ferries</label>
-        <label><input type="checkbox" id="other-checkbox" checked> Out of Service</label>
+        <label><input type="checkbox" id="other-checkbox" checked> Other</label>
     </div>
+    <div id="debug">Waiting for data...</div>
+</div>
 
-    <div id="map-controls">
-        <h4>Base Map</h4>
-        <select id="base-map-selector">
-            <option value="light" selected>Light</option>
-            <option value="streets">Streets</option>
-            <option value="satellite">Satellite</option>
-            <option value="dark">Dark</option>
-        </select>
-    </div>
+<script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
+<script src="script.js"></script>
 
-    <div id="map"></div>
-    <div id="debug">Loading...</div>
-
-    <!-- Leaflet JS -->
-    <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
-    <script src="script.js"></script>
 </body>
 </html>
-
