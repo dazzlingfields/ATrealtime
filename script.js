@@ -207,7 +207,7 @@ async function fetchVehicles(){
 
 // --- Train station icon ---
 const stationIcon = L.icon({
-  iconUrl: 'station-logo.png',  // Place your logo in the GitHub repo and use this path
+  iconUrl: 'train.png', 
   iconSize: [32, 32],           // Adjust size as needed
   iconAnchor: [16, 32],         // The point of the icon which will correspond to marker's location
   popupAnchor: [0, -32]         // Where the popup opens relative to the icon
@@ -242,4 +242,5 @@ async function addTrainStations(){
   await fetchVehicles();
   setInterval(fetchVehicles,15000);
 })();
+
 
