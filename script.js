@@ -68,6 +68,53 @@ const getVehicleIcon = color => L.divIcon({
   iconAnchor:[8,8]
 });
 
+// --- Bus type lookup ---
+// Alexander Dennis Enviro200 buses
+const enviro200Buses = [
+  "G2031","G2032","G2033","G2034","G2035","G2057","G2058","G2059",
+  "G4134","G4137","G4138","G4139","G4146","G4181","G4184","G4185",
+  "G4186","N4001","N4002","N4004","N4005","N4006","N4007","N4008",
+  "N4009","N4011","N4015","N4016","N4017","N4018","N4019","N4020",
+  "N4021","N4022","N4023","N4024","N4025","N4026","N4027","N4028",
+  "N4029","N4030","N4031","N4032","N4033","N4034","N4035","N4036",
+  "N4037","N4038","N4039","N4040","N4041","N4042","N4043","N4044",
+  "N4045","N4046","N4047","N4048","N4049","N4050","N4051","N4052",
+  "N4053","N4054","N4055","N4056","N4057","N4058","N4059","N4060",
+  "N4061","N4062","N4063","N4064","N4065","N4066","N4067","N4068",
+  "N4069","N4070","N4071","N4072","N4073","N4074","N4075","N4076",
+  "N4077","N4078","N4080","N4081","N4082","N4083","N4084","N4085",
+  "N4086","N4087","N4088","N4089","N4091","N4092","N4113","N4114",
+  "N4115","N4116","N4117","N4118","N4119","N4120","N4121","N4122",
+  "N4123","N4124","N4125","N4126","N4127","N4128","N4129","N4131",
+  "N4132","N4133","N4135","N4136","N4140","N4141","N4142","N4143",
+  "N4144","N4145","N4147","N4148","N4149","N4150","N4151","N4152",
+  "N4153","N4154","N4155","N4156","N4157","N4158","N4159","N4160",
+  "N4161","N4162","N4163","N4164","N4165","N4166","N4167","N4168",
+  "N4169","N4170","N4171","N4172","N4173","N4174","N4175","N4176",
+  "N4177","N4178","N4179","N4180","N4182","N4183","N4188","N4190",
+  "N4191","N4192","N4193","N4194","N4195","N4196","N4197","N4198",
+  "N4199","N4200","N4201","N4202","N4203","N4204","N4205","N4206",
+  "N4207","N4208","N4209","N4210","N4211","N4212","N4213","N4214",
+  "N4215","N4216","N4217","N4218","N4219","N4220","N4221","N4222",
+  "N4223","N4224","N4225","N4226","N4227","N4228","N4229","N4230",
+  "N4231","N4232","N4233","N4234","N4235","N4236","N4237","N4238",
+  "N4239","N4240","N4241","N4242","N4243","N4244","N4245","N4246",
+  "N4247","N4248","N4249","N4251","N4252","N4253","N4254","N4255",
+  "N4256","N4257","N4258","N4259","N4261","N4262","N4263","N4264",
+  "N4265","N4266","N4267","N4268","N4269","N4270","N4271","N4272",
+  "N4273","N4274","N4275","N4276","N4277","N4278","N4279","N4280",
+  "N4281","N4282","N4283","N4284","N4285","N4286","N4287","N4288",
+  "N4289","N4290","N4291","N4292","N4293","N4295","N4296","N4297",
+  "N4298","N4299","N4300","N4301","N4302","N4303","N4304","N4305",
+  "N4306","N4307","N4308","N4309","N4310","N4311","N4312","N4313",
+  "N4314","N4315","N4316","N4317","N4318","N4319","N4320","N4321",
+  "N4322","N4323","N4324","N4325","N4326","N4327","N4328","N4329",
+  "N4330","N4331","N4332","N4333","N4334","N4335","N4336","N4337",
+  "N4338","N4339","N4340","N4341","N4342","N4343","N4344","N4345",
+  "N4346","N4347","N4348","N4349","N4350","N4351","N4352","N4353",
+  "N4354"
+];
+
 // --- Safe fetch ---
 async function safeFetch(url){
   try{
@@ -169,7 +216,7 @@ async function fetchVehicles(){
 
     const lat = v.vehicle.position.latitude;
     const lon = v.vehicle.position.longitude;
-    const vehicleLabel = v.vehicle.vehicle?.label || "N/A";
+    let vehicleLabel = v.vehicle.vehicle?.label || "N/A";
     const licensePlate = v.vehicle.vehicle?.license_plate || "N/A";
     const occupancyStatus = v.vehicle.occupancy_status;
     const speedKmh = v.vehicle.position.speed ? v.vehicle.position.speed*3.6 : 0;
@@ -202,7 +249,12 @@ async function fetchVehicles(){
     if(speedKmh>=0 && speedKmh<=maxSpeed) speed = speedKmh.toFixed(1)+" km/h";
 
     const operator = v.vehicle.vehicle?.operator_id || "";
-    const vehicleLabelWithOperator = operator+vehicleLabel;
+    let vehicleLabelWithOperator = operator+vehicleLabel;
+
+    // --- Add bus type if Enviro200 ---
+    if(typeKey === "bus" && enviro200Buses.includes(vehicleLabel)){
+      vehicleLabelWithOperator += " - Alexander Dennis Enviro200";
+    }
 
     const popupContent = `
       <b>Route:</b> ${routeName}<br>
