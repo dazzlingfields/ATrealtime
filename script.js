@@ -151,7 +151,6 @@ async function fetchVehicles(){
 
   const vehicles = json?.response?.entity || json?.entity || [];
   const newVehicleIds = new Set();
-
   const inServiceAMTrains = [];
   const outOfServiceAMTrains = [];
 
@@ -166,7 +165,7 @@ async function fetchVehicles(){
     const lon = v.vehicle.position.longitude;
     const vehicleLabel = v.vehicle.vehicle?.label || "N/A";
     const operator = v.vehicle.vehicle?.operator_id || "";
-    const vehicleLabelWithOperator = operator+vehicleLabel;
+    const vehicleLabelWithOperator = operator + vehicleLabel;
     const licensePlate = v.vehicle.vehicle?.license_plate || "N/A";
     const occupancyStatus = v.vehicle.occupancy_status;
     const speedKmh = v.vehicle.position.speed ? v.vehicle.position.speed*3.6 : 0;
@@ -191,12 +190,13 @@ async function fetchVehicles(){
       }
     }
 
-    // --- Bus type from JSON ---
+    // --- Bus type from JSON (updated) ---
     let busType = "";
     if(typeKey==="bus"){
-      for(const type in busTypes){
-        if(busTypes[type].includes(vehicleLabelWithOperator)){
-          busType = type;
+      for(const model in busTypes){
+        const operators = busTypes[model];
+        if(operators[operator] && operators[operator].includes(Number(vehicleLabel))){
+          busType = model;
           break;
         }
       }
