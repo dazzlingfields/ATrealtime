@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>AT Realtime</title>
+  <title>AT Realtime Map</title>
   <link
     rel="stylesheet"
     href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css"
@@ -18,7 +18,9 @@
       padding: 10px;
       border-radius: 5px;
       z-index: 1000;
+      font-family: sans-serif;
     }
+    .control-group { margin-bottom: 10px; }
     #debug {
       font-family: monospace;
       font-size: 0.9em;
@@ -28,21 +30,20 @@
 </head>
 <body>
   <div id="map"></div>
-<div id="controls">
-  <div class="control-group">
-    <h4>Vehicle Display</h4>
-    <label><input type="checkbox" id="bus-checkbox" checked> Buses</label>
-    <label><input type="checkbox" id="train-checkbox" checked> Trains</label>
-    <label><input type="checkbox" id="ferry-checkbox" checked> Ferries</label>
-    <label><input type="checkbox" id="other-checkbox" checked> Other</label>
+  <div id="controls">
+    <div class="control-group">
+      <h4>Vehicle Display</h4>
+      <label><input type="checkbox" id="bus-checkbox" checked> Buses</label>
+      <label><input type="checkbox" id="train-checkbox" checked> Trains</label>
+      <label><input type="checkbox" id="ferry-checkbox" checked> Ferries</label>
+      <label><input type="checkbox" id="outofservice-checkbox" checked> Out of Service</label>
+    </div>
+    <div class="control-group">
+      <h4>Simulation</h4>
+      <label><input type="checkbox" id="tehuia-checkbox" checked> Te Huia Train</label>
+    </div>
+    <div id="debug"></div>
   </div>
-  <div id="debug">Waiting for data...</div>
-</div>
-  </div>
-
-  <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
   <script src="script.js"></script>
 </body>
 </html>
-
-
