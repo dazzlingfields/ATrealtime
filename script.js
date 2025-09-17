@@ -1,6 +1,4 @@
-// v3.12 - GitHub Pages compatible, uses serverless proxy, map type selector, off-route detection
-// Requires turf.js
-
+// v3.12 - GitHub Pages compatible, serverless proxy, map type selector, off-route & AM train improvements
 const proxyBaseUrl = "https://atrealtime.vercel.app";
 const realtimeUrl = `${proxyBaseUrl}/api/realtime`;
 const routesUrl   = `${proxyBaseUrl}/api/routes`;
@@ -25,6 +23,8 @@ const baseLayers = {
     maxZoom: 20, subdomains:['mt0','mt1','mt2','mt3'], attribution: '&copy; Google'
   })
 };
+
+// Add layer control
 L.control.layers(baseLayers).addTo(map);
 
 // --- Global data ---
@@ -33,7 +33,6 @@ const routes = {};
 const trips = {};
 const vehicleMarkers = {};
 
-// Layer groups
 const layerGroups = {
   bus: L.layerGroup().addTo(map),
   train: L.layerGroup().addTo(map),
@@ -66,10 +65,13 @@ const getVehicleIcon = color => L.divIcon({
   iconAnchor:[8,8]
 });
 
-// --- Fetch helper ---
+// --- Fetch helper with extended timeout ---
 async function safeFetch(url){
   try{
-    const res = await fetch(url);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout
+    const res = await fetch(url, { signal: controller.signal });
+    clearTimeout(timeoutId);
     if(!res.ok) throw new Error(`Failed fetch: ${res.status}`);
     return await res.json();
   } catch(err){
@@ -95,22 +97,14 @@ async function fetchTripById(tripId){
   return null;
 }
 
-// --- Off-route detection ---
-function checkOffRoute(vehicleLat, vehicleLon, routeShape) {
-  if(!routeShape || !routeShape.length) return false; // No shape to compare
-  const vehiclePoint = turf.point([vehicleLon, vehicleLat]);
-  const routeLine = turf.lineString(routeShape.map(p=>[p[1],p[0]])); // assuming shape=[lat,lon]
-  const distanceMeters = turf.pointToLineDistance(vehiclePoint, routeLine, { units: 'meters' });
-  return distanceMeters > 50; // threshold in meters
-}
-
-// --- Fetch vehicles ---
+// --- Vehicle updates ---
 async function fetchVehicles(){
   const json = await safeFetch(realtimeUrl);
   if(!json) return;
 
   const vehicles = json?.response?.entity || json?.entity || [];
   const newVehicleIds = new Set();
+  const trainPositions = [];
 
   const dataPromises = vehicles.map(v=>{
     const vehicleId = v.vehicle?.vehicle?.id;
@@ -150,21 +144,50 @@ async function fetchVehicles(){
       routeName = routeInfo.route_short_name||"N/A";
     }
 
-    // Speed sanity
     let speedKmh = v.vehicle.position.speed ? v.vehicle.position.speed*3.6 : null;
     if(speedKmh!==null){
       let maxSpeed = typeKey==="bus"?100:typeKey==="train"?120:typeKey==="ferry"?60:160;
       if(speedKmh>=0 && speedKmh<=maxSpeed) speed = speedKmh.toFixed(1)+" km/h";
     }
 
+    // Off-route detection
+    let offRoute = false;
+    if(typeKey==="bus" && routeInfo?.geometry?.length){
+      const point = L.latLng(lat, lon);
+      offRoute = !routeInfo.geometry.some(coord=>{
+        const dist = point.distanceTo(L.latLng(coord[1], coord[0]));
+        return dist<50;
+      });
+    }
+
+    if(typeKey==="train") trainPositions.push({vehicleId, lat, lon, speedKmh, routeId: routeInfo?.id});
+
     const operator = v.vehicle.vehicle?.operator_id || "";
     const vehicleLabelWithOperator = operator+vehicleLabel;
 
-    // --- Off-route check ---
-    let offRoute = false;
-    if(routeInfo?.shape) offRoute = checkOffRoute(lat, lon, routeInfo.shape);
+    let extraInfo = offRoute ? "<br><b>Off Route!</b>" : "";
 
-    const routeStatus = offRoute ? "Off Route" : "On Route";
+    let markerIcon = getVehicleIcon(color);
+
+    if(typeKey==="train"){
+      const nearby = trainPositions.filter(t=>{
+        if(t.vehicleId===vehicleId) return false;
+        if(!t.speedKmh || !speedKmh) return false;
+        if(t.routeId!==routeInfo?.id) return false;
+        const dist = L.latLng(lat, lon).distanceTo(L.latLng(t.lat, t.lon));
+        return dist>0 && dist<100;
+      });
+      if(nearby.length>0){
+        markerIcon = L.divIcon({
+          className:'vehicle-icon-combined',
+          html:`<div style="background-color:#800080;width:24px;height:12px;border-radius:6px;border:2px solid white;"></div>`,
+          iconSize:[24,16],
+          iconAnchor:[12,8]
+        });
+        const nearbyIds = nearby.map(t=>t.vehicleId).join(", ");
+        extraInfo += `<br><b>AM 6-car train moving together with ${nearbyIds}</b>`;
+      }
+    }
 
     const popupContent = `
       <b>Route:</b> ${routeName}<br>
@@ -172,23 +195,29 @@ async function fetchVehicles(){
       <b>Vehicle:</b> ${vehicleLabelWithOperator}<br>
       <b>Number Plate:</b> ${licensePlate}<br>
       <b>Speed:</b> ${speed}<br>
-      <b>Occupancy:</b> ${occupancy}<br>
-      <b>Status:</b> ${routeStatus}
+      <b>Occupancy:</b> ${occupancy}
+      ${extraInfo}
     `;
 
     if(vehicleMarkers[vehicleId]){
       vehicleMarkers[vehicleId].setLatLng([lat,lon]);
       vehicleMarkers[vehicleId].setPopupContent(popupContent);
-      vehicleMarkers[vehicleId].setIcon(getVehicleIcon(color));
+      vehicleMarkers[vehicleId].setIcon(markerIcon);
+      vehicleMarkers[vehicleId].typeKey = typeKey;
+      vehicleMarkers[vehicleId].routeId = routeInfo?.id;
+      vehicleMarkers[vehicleId].speedKmh = speedKmh;
     } else {
-      const newMarker = L.marker([lat,lon],{icon:getVehicleIcon(color)});
+      const newMarker = L.marker([lat,lon],{icon:markerIcon});
       newMarker.bindPopup(popupContent);
       newMarker.addTo(layerGroups[typeKey]);
+      newMarker.typeKey = typeKey;
+      newMarker.routeId = routeInfo?.id;
+      newMarker.speedKmh = speedKmh;
+      newMarker.vehicleId = vehicleId;
       vehicleMarkers[vehicleId]=newMarker;
     }
   });
 
-  // Remove old markers
   Object.keys(vehicleMarkers).forEach(id=>{
     if(!newVehicleIds.has(id)){
       map.removeLayer(vehicleMarkers[id]);
