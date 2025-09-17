@@ -1,9 +1,10 @@
-// v4 - GitHub Pages compatible, serverless proxy, train stations added
+// v4 - Real-time map with train stations and departures
 const proxyBaseUrl = "https://atrealtime.vercel.app";
 const realtimeUrl = `${proxyBaseUrl}/api/realtime`;
 const routesUrl   = `${proxyBaseUrl}/api/routes`;
 const tripsUrl    = `${proxyBaseUrl}/api/trips`;
 const stopsUrl    = `${proxyBaseUrl}/api/stops`;
+const stopTimesUrl = `${proxyBaseUrl}/api/stopTimes`;
 
 // --- Map setup ---
 const map = L.map("map", { zoomControl: true }).setView([-36.8485, 174.7633], 13);
@@ -30,9 +31,9 @@ const debugBox = document.getElementById("debug");
 const routes = {};
 const trips = {};
 const vehicleMarkers = {};
-const stationMarkers = {};
+const trainStationMarkers = {};
 
-// --- Vehicle layers ---
+// --- Layer groups ---
 const layerGroups = {
   bus: L.layerGroup().addTo(map),
   train: L.layerGroup().addTo(map),
@@ -42,30 +43,26 @@ const layerGroups = {
 };
 
 // --- Layer toggles ---
-document.getElementById("bus-checkbox").addEventListener("change", e => toggleLayer("bus", e.target.checked));
-document.getElementById("train-checkbox").addEventListener("change", e => toggleLayer("train", e.target.checked));
-document.getElementById("ferry-checkbox").addEventListener("change", e => toggleLayer("ferry", e.target.checked));
-document.getElementById("other-checkbox").addEventListener("change", e => toggleLayer("other", e.target.checked));
-document.getElementById("stations-checkbox").addEventListener("change", e => toggleLayer("stations", e.target.checked));
-
-function toggleLayer(type, visible) {
-  if (visible) map.addLayer(layerGroups[type]);
+["bus","train","ferry","other","stations"].forEach(type=>{
+  const checkbox = document.getElementById(type+"-checkbox");
+  if(checkbox){
+    checkbox.addEventListener("change", e=>toggleLayer(type, e.target.checked));
+  }
+});
+function toggleLayer(type, visible){
+  if(visible) map.addLayer(layerGroups[type]);
   else map.removeLayer(layerGroups[type]);
 }
 
 // --- Vehicle styles ---
 const vehicleColors = { 3:"#007bff", 2:"#dc3545", 4:"#ffc107", default:"#6c757d" };
-const occupancyLabels = {0:"Empty",1:"Many Seats Available",2:"Few Seats Available",3:"Standing Room Only",4:"Crushed Standing Room Only",5:"Full",6:"Not Accepting Passengers"};
-const getVehicleIcon = color => L.divIcon({className:'vehicle-icon', html:`<div style="background-color:${color};width:12px;height:12px;border-radius:50%;border:2px solid white;"></div>`, iconSize:[16,16], iconAnchor:[8,8]});
-const getStationIcon = () => L.divIcon({className:'station-icon', html:`<div style="background-color:#17a2b8;width:14px;height:14px;border-radius:50%;border:2px solid white;"></div>`, iconSize:[16,16], iconAnchor:[8,8]});
+const occupancyLabels = { 0:"Empty",1:"Many Seats Available",2:"Few Seats Available",3:"Standing Room Only",4:"Crushed Standing Room Only",5:"Full",6:"Not Accepting Passengers" };
+const getVehicleIcon = color => L.divIcon({ className:'vehicle-icon', html:`<div style="background-color:${color};width:12px;height:12px;border-radius:50%;border:2px solid white;"></div>`, iconSize:[16,16], iconAnchor:[8,8] });
 
-// --- Fetch helper ---
-async function safeFetch(url, timeout=8000){
+// --- Safe fetch ---
+async function safeFetch(url){
   try{
-    const controller = new AbortController();
-    const id = setTimeout(()=>controller.abort(), timeout);
-    const res = await fetch(url,{signal:controller.signal});
-    clearTimeout(id);
+    const res = await fetch(url);
     if(!res.ok) throw new Error(`Failed fetch: ${res.status}`);
     return await res.json();
   } catch(err){
@@ -76,65 +73,82 @@ async function safeFetch(url, timeout=8000){
 }
 
 // --- Route/Trip caching ---
-async function fetchRouteById(routeId){ if(routes[routeId]) return routes[routeId]; const json=await safeFetch(`${routesUrl}?id=${routeId}`); const routeData=json?.data?.[0]?.attributes||json?.data?.attributes; if(routeData){ routes[routeId]=routeData; return routeData; } return null; }
-async function fetchTripById(tripId){ if(trips[tripId]) return trips[tripId]; const json=await safeFetch(`${tripsUrl}?id=${tripId}`); const tripData=json?.data?.[0]?.attributes||json?.data?.attributes; if(tripData){ trips[tripId]=tripData; return tripData; } return null; }
+async function fetchRouteById(routeId){
+  if(routes[routeId]) return routes[routeId];
+  const json = await safeFetch(`${routesUrl}?id=${routeId}`);
+  const routeData = json?.data?.[0]?.attributes || json?.data?.attributes;
+  if(routeData){ routes[routeId]=routeData; return routeData; }
+  return null;
+}
+async function fetchTripById(tripId){
+  if(trips[tripId]) return trips[tripId];
+  const json = await safeFetch(`${tripsUrl}?id=${tripId}`);
+  const tripData = json?.data?.[0]?.attributes || json?.data?.attributes;
+  if(tripData){ trips[tripId]=tripData; return tripData; }
+  return null;
+}
 
 // --- Fetch vehicles ---
 async function fetchVehicles(){
-  const json = await safeFetch(realtimeUrl,12000);
+  const json = await safeFetch(realtimeUrl);
   if(!json) return;
-  const vehicles = json?.response?.entity||json?.entity||[];
+  const vehicles = json?.response?.entity || json?.entity || [];
   const newVehicleIds = new Set();
 
   const dataPromises = vehicles.map(v=>{
     const vehicleId = v.vehicle?.vehicle?.id;
     const routeId = v.vehicle?.trip?.route_id;
     const tripId  = v.vehicle?.trip?.trip_id;
-    return Promise.all([routeId?fetchRouteById(routeId):null, tripId?fetchTripById(tripId):null, v, vehicleId]);
+    return Promise.all([ routeId?fetchRouteById(routeId):null, tripId?fetchTripById(tripId):null, v, vehicleId ]);
   });
 
   const results = await Promise.all(dataPromises);
 
   results.forEach(result=>{
     const [routeInfo, tripInfo, v, vehicleId] = result;
-    if(!v.vehicle||!v.vehicle.position||!vehicleId) return;
-
+    if(!v.vehicle || !v.vehicle.position || !vehicleId) return;
     newVehicleIds.add(vehicleId);
 
     const lat = v.vehicle.position.latitude;
     const lon = v.vehicle.position.longitude;
-    const vehicleLabel = v.vehicle.vehicle?.label||"N/A";
-    const licensePlate = v.vehicle.vehicle?.license_plate||"N/A";
+    const vehicleLabel = v.vehicle.vehicle?.label || "N/A";
+    const licensePlate = v.vehicle.vehicle?.license_plate || "N/A";
     const occupancyStatus = v.vehicle.occupancy_status;
 
-    let typeKey="other";
+    let typeKey = "other";
     let color = vehicleColors.default;
-    let routeName="N/A";
-    let destination=tripInfo?.trip_headsign||v.vehicle.trip?.trip_headsign||"N/A";
-    let speed="N/A";
+    let routeName = "N/A";
+    let destination = tripInfo?.trip_headsign || v.vehicle.trip?.trip_headsign || "N/A";
+    let speed = "N/A";
     const occupancy = occupancyStatus!==undefined?occupancyLabels[occupancyStatus]||"Unknown":"N/A";
 
     if(routeInfo){
       const routeType = routeInfo.route_type;
-      switch(routeType){ case 3:typeKey="bus";color=vehicleColors[3];break; case 2:typeKey="train";color=vehicleColors[2];break; case 4:typeKey="ferry";color=vehicleColors[4];break;}
-      routeName=routeInfo.route_short_name||"N/A";
+      switch(routeType){
+        case 3:typeKey="bus";color=vehicleColors[3];break;
+        case 2:typeKey="train";color=vehicleColors[2];break;
+        case 4:typeKey="ferry";color=vehicleColors[4];break;
+      }
+      routeName = routeInfo.route_short_name||"N/A";
     }
 
     // Speed sanity
-    let speedKmh = v.vehicle.position.speed?v.vehicle.position.speed*3.6:null;
-    if(speedKmh!==null){ let maxSpeed = typeKey==="bus"?100:typeKey==="train"?120:typeKey==="ferry"?60:160; if(speedKmh>=0&&speedKmh<=maxSpeed) speed=speedKmh.toFixed(1)+" km/h";}
+    let speedKmh = v.vehicle.position.speed ? v.vehicle.position.speed*3.6 : null;
+    if(speedKmh!==null){
+      let maxSpeed = typeKey==="bus"?100:typeKey==="train"?120:typeKey==="ferry"?60:160;
+      if(speedKmh>=0 && speedKmh<=maxSpeed) speed = speedKmh.toFixed(1)+" km/h";
+    }
 
-    const operator = v.vehicle.vehicle?.operator_id||"";
+    const operator = v.vehicle.vehicle?.operator_id || "";
     const vehicleLabelWithOperator = operator+vehicleLabel;
 
-    const popupContent = `
-      <b>Route:</b> ${routeName}<br>
-      <b>Destination:</b> ${destination}<br>
-      <b>Vehicle:</b> ${vehicleLabelWithOperator}<br>
-      <b>Number Plate:</b> ${licensePlate}<br>
-      <b>Speed:</b> ${speed}<br>
-      <b>Occupancy:</b> ${occupancy}
-    `;
+    const popupContent = `\
+<b>Route:</b> ${routeName}<br>\
+<b>Destination:</b> ${destination}<br>\
+<b>Vehicle:</b> ${vehicleLabelWithOperator}<br>\
+<b>Number Plate:</b> ${licensePlate}<br>\
+<b>Speed:</b> ${speed}<br>\
+<b>Occupancy:</b> ${occupancy}`;
 
     if(vehicleMarkers[vehicleId]){
       vehicleMarkers[vehicleId].setLatLng([lat,lon]);
@@ -148,59 +162,60 @@ async function fetchVehicles(){
     }
   });
 
-  Object.keys(vehicleMarkers).forEach(id=>{if(!newVehicleIds.has(id)){map.removeLayer(vehicleMarkers[id]);delete vehicleMarkers[id];}});
-  debugBox.textContent=`Last update: ${new Date().toLocaleTimeString()} | Vehicles: ${vehicles.length}`;
+  // Remove old markers
+  Object.keys(vehicleMarkers).forEach(id=>{
+    if(!newVehicleIds.has(id)){
+      map.removeLayer(vehicleMarkers[id]);
+      delete vehicleMarkers[id];
+    }
+  });
+
+  debugBox.textContent = `Last update: ${new Date().toLocaleTimeString()} | Vehicles: ${vehicles.length}`;
 }
 
-// --- Fetch train stations ---
-async function fetchStations(){
-  const json = await safeFetch(`${stopsUrl}?type=train`);
-  if(!json) return;
+// --- Train stations ---
+async function fetchTrainStations(){
+  const json = await safeFetch(`${stopsUrl}?filter[route_type]=2`); // route_type 2 = train
+  if(!json?.data) return;
+  json.data.forEach(stop=>{
+    const lat = stop.attributes.latitude;
+    const lon = stop.attributes.longitude;
+    const name = stop.attributes.stop_name;
+    const stopId = stop.id;
 
-  const stations = json?.data||[];
-  stations.forEach(st=>{
-    const lat = st.attributes.latitude;
-    const lon = st.attributes.longitude;
-    const name = st.attributes.stop_name;
-    const id = st.id;
-
-    const marker = L.marker([lat,lon],{icon:getStationIcon()}).addTo(layerGroups.stations);
-    marker.bindPopup(`<b>${name}</b><br>Loading next departures...`);
+    const marker = L.marker([lat,lon], {icon: L.divIcon({className:'station-icon', html:`<div style="background-color:#28a745;width:10px;height:10px;border-radius:50%;border:2px solid white;"></div>`, iconSize:[16,16], iconAnchor:[8,8]})});
+    marker.bindPopup(`<b>${name}</b><br>Loading departures...`);
     marker.on("click", async ()=>{
-      const departures = await safeFetch(`${realtimeUrl}?stopid=${id}`);
-      if(!departures) { marker.getPopup().setContent(`<b>${name}</b><br>Unable to fetch departures.`); return; }
-
-      // Filter only train departures and get next 2 each direction
-      const nextTrains = departures.response?.entity?.filter(d=>d.vehicle?.trip?.route_type===2) || [];
-      const byDirection = {};
-      nextTrains.forEach(t=>{
-        const dir = t.vehicle.trip.direction_id;
-        if(!byDirection[dir]) byDirection[dir]=[];
-        byDirection[dir].push({
-          headsign: t.vehicle.trip.trip_headsign,
-          platform: t.vehicle.stop_id, // optional: update to correct platform if API provides
-          departure: t.vehicle.position?.timestamp||"N/A"
-        });
-      });
-
-      let content = `<b>${name}</b>`;
-      Object.keys(byDirection).forEach(dir=>{
-        content+=`<br><u>Direction ${dir}</u>`;
-        byDirection[dir].slice(0,2).forEach(tr=>{
-          content+=`<br>${tr.headsign} - Platform ${tr.platform} - ${new Date(tr.departure).toLocaleTimeString()}`;
-        });
-      });
-
-      marker.getPopup().setContent(content);
+      const departures = await fetchStopDepartures(stopId);
+      const html = `<b>${name}</b><br>${departures}`;
+      marker.setPopupContent(html).openPopup();
     });
-
-    stationMarkers[id]=marker;
+    marker.addTo(layerGroups.stations);
+    trainStationMarkers[stopId] = marker;
   });
+}
+
+// --- Fetch next departures ---
+async function fetchStopDepartures(stopId){
+  const today = new Date().toISOString().split('T')[0];
+  const nowHour = new Date().getHours();
+  const url = `${stopsUrl}/${stopId}/stoptrips?filter[date]=${today}&filter[start_hour]=${nowHour}&filter[hour_range]=2`;
+  const json = await safeFetch(url);
+  if(!json?.data) return "No upcoming departures";
+
+  // Sort and take next 2 in each direction
+  const departures = json.data.slice(0,4).map(d=>{
+    const tripHeadsign = d.attributes.trip_headsign || "N/A";
+    const platform = d.attributes.platform_code || "N/A";
+    const time = d.attributes.arrival_time || d.attributes.departure_time || "N/A";
+    return `${time} - ${tripHeadsign} (Platform ${platform})`;
+  }).join("<br>");
+  return departures || "No upcoming departures";
 }
 
 // --- Init ---
 (async function init(){
   fetchVehicles();
-  fetchStations();
-  setInterval(fetchVehicles,15000);
+  setInterval(fetchVehicles, 15000);
+  await fetchTrainStations();
 })();
