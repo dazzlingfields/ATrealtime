@@ -1,4 +1,4 @@
-// ================== v4.8 - Real-time Vehicle Tracking (6-car Indicator) ==================
+// ================== v4.5 - Real-time Vehicle Tracking (6-car pairing) ==================
 
 // --- API endpoints ---
 const proxyBaseUrl = "https://atrealtime.vercel.app";
@@ -10,55 +10,29 @@ const tripsUrl    = `${proxyBaseUrl}/api/trips`;
 const map = L.map("map").setView([-36.8485, 174.7633], 12);
 
 // Base maps
-const osm = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-  attribution: "© OpenStreetMap contributors"
-});
+const osm = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { attribution: "© OpenStreetMap contributors" });
+const light = L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", { subdomains: "abcd", attribution: "© OpenStreetMap contributors © CARTO" }).addTo(map);
+const dark = L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", { subdomains: "abcd", attribution: "© OpenStreetMap contributors © CARTO" });
+const satellite = L.tileLayer("https://{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}", { subdomains: ["mt0","mt1","mt2","mt3"], attribution: "© Google" });
 
-const light = L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", {
-  subdomains: "abcd",
-  attribution: "© OpenStreetMap contributors © CARTO"
-}).addTo(map);
-
-const dark = L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
-  subdomains: "abcd",
-  attribution: "© OpenStreetMap contributors © CARTO"
-});
-
-const satellite = L.tileLayer("https://{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}", {
-  subdomains: ["mt0", "mt1", "mt2", "mt3"],
-  attribution: "© Google"
-});
-
-const baseMaps = {
-  "Light": light,
-  "Dark": dark,
-  "OSM": osm,
-  "Satellite": satellite
-};
+const baseMaps = { "Light": light, "Dark": dark, "OSM": osm, "Satellite": satellite };
 L.control.layers(baseMaps).addTo(map);
 
 // --- Globals ---
 const debugBox = document.getElementById("debug");
-const sixCarBox = document.getElementById("sixCarCounter");
+const sixCarBox = document.getElementById("six-car-count"); // separate counter display
 const routes = {};
 const trips = {};
 const vehicleMarkers = {};
 let sixCarCount = 0;
 
 // --- Layer groups ---
-const layerGroups = {
-  bus: L.layerGroup().addTo(map),
-  train: L.layerGroup().addTo(map),
-  ferry: L.layerGroup().addTo(map),
-  other: L.layerGroup().addTo(map)
-};
+const layerGroups = { bus: L.layerGroup().addTo(map), train: L.layerGroup().addTo(map), ferry: L.layerGroup().addTo(map), other: L.layerGroup().addTo(map) };
 
-// --- Layer toggles ---
+// --- Checkboxes ---
 ["bus","train","ferry","other"].forEach(type=>{
   const checkbox = document.getElementById(type+"-checkbox");
-  if(checkbox){
-    checkbox.addEventListener("change", e=>toggleLayer(type, e.target.checked));
-  }
+  if(checkbox) checkbox.addEventListener("change", e=> toggleLayer(type, e.target.checked));
 });
 function toggleLayer(type, visible){
   if(visible) map.addLayer(layerGroups[type]);
@@ -67,24 +41,8 @@ function toggleLayer(type, visible){
 
 // --- Vehicle styles ---
 const vehicleColors = { 3:"#007bff", 2:"#dc3545", 4:"#ffc107", default:"#6c757d" };
-const occupancyLabels = {
-  0:"Empty",
-  1:"Many Seats Available",
-  2:"Few Seats Available",
-  3:"Standing Room Only",
-  4:"Crushed Standing Room Only",
-  5:"Full",
-  6:"Not Accepting Passengers"
-};
-const getVehicleIcon = (color, sixCar=false) => L.divIcon({
-  className:'vehicle-icon',
-  html:`<div style="position:relative;width:14px;height:14px;">
-          <div style="background-color:${color};width:12px;height:12px;border-radius:50%;border:2px solid white;"></div>
-          ${sixCar ? '<div style="position:absolute;top:-6px;right:-6px;font-size:10px;">🚆</div>' : ''}
-        </div>`,
-  iconSize:[16,16],
-  iconAnchor:[8,8]
-});
+const occupancyLabels = { 0:"Empty",1:"Many Seats Available",2:"Few Seats Available",3:"Standing Room Only",4:"Crushed Standing Room Only",5:"Full",6:"Not Accepting Passengers" };
+const getVehicleIcon = (color) => L.divIcon({ className:'vehicle-icon', html:`<div style="background-color:${color};width:12px;height:12px;border-radius:50%;border:2px solid white;"></div>`, iconSize:[16,16], iconAnchor:[8,8] });
 
 // --- Safe fetch ---
 async function safeFetch(url){
@@ -117,11 +75,7 @@ async function fetchTripById(tripId){
 // --- Fetch vehicles ---
 async function fetchVehicles(){
   const json = await safeFetch(realtimeUrl);
-  if(!json) {
-    debugBox.textContent = "Error fetching vehicle data";
-    sixCarBox.textContent = "6-car trains: N/A";
-    return;
-  }
+  if(!json) { debugBox.textContent="Error fetching vehicle data"; return; }
 
   const vehicles = json?.response?.entity || json?.entity || [];
   const newVehicleIds = new Set();
@@ -131,20 +85,15 @@ async function fetchVehicles(){
     const vehicleId = v.vehicle?.vehicle?.id;
     const routeId = v.vehicle?.trip?.route_id;
     const tripId  = v.vehicle?.trip?.trip_id;
-    return Promise.all([
-      routeId ? fetchRouteById(routeId) : null,
-      tripId ? fetchTripById(tripId) : null,
-      v,
-      vehicleId
-    ]);
+    return Promise.all([ routeId ? fetchRouteById(routeId) : null, tripId ? fetchTripById(tripId) : null, v, vehicleId ]);
   });
 
   const results = await Promise.all(dataPromises);
 
-  // Separate AM trains
   const inServiceAMTrains = [];
   const outOfServiceAMTrains = [];
 
+  // First pass: build train lists
   results.forEach(result=>{
     const [routeInfo, tripInfo, v, vehicleId] = result;
     if(!v.vehicle || !v.vehicle.position || !vehicleId) return;
@@ -161,72 +110,55 @@ async function fetchVehicles(){
     let routeName = "N/A";
     let destination = tripInfo?.trip_headsign || v.vehicle.trip?.trip_headsign || "N/A";
     let speed = "N/A";
-    const occupancy = occupancyStatus!==undefined
-      ? occupancyLabels[occupancyStatus] || "Unknown"
-      : "N/A";
+    const occupancy = occupancyStatus!==undefined ? occupancyLabels[occupancyStatus] || "Unknown" : "N/A";
 
     if(routeInfo){
       const routeType = routeInfo.route_type;
-      switch(routeType){
-        case 3: typeKey="bus"; color=vehicleColors[3]; break;
-        case 2: typeKey="train"; color=vehicleColors[2]; break;
-        case 4: typeKey="ferry"; color=vehicleColors[4]; break;
-      }
+      switch(routeType){ case 3:typeKey="bus";color=vehicleColors[3];break; case 2:typeKey="train";color=vehicleColors[2];break; case 4:typeKey="ferry";color=vehicleColors[4];break;}
       routeName = routeInfo.route_short_name || "N/A";
     }
 
-    // Speed sanity
+    // Speed sanity with larger tolerance
     let speedKmh = v.vehicle.position.speed ? v.vehicle.position.speed*3.6 : null;
     if(speedKmh!==null){
-      let maxSpeed = typeKey==="bus"?150:typeKey==="train"?200:typeKey==="ferry"?120:250;
+      let maxSpeed = typeKey==="bus"?120:typeKey==="train"?150:typeKey==="ferry"?80:200;
       if(speedKmh>=0 && speedKmh<=maxSpeed) speed = speedKmh.toFixed(1)+" km/h";
     }
 
-    // --- 6-car detection classification ---
-    let isSixCar = false;
+    // Store AM trains for pairing
     if(vehicleLabel.includes("AM")){
       if(typeKey==="train") inServiceAMTrains.push({vehicleId, lat, lon});
-      else if(typeKey==="other") outOfServiceAMTrains.push({vehicleId, lat, lon});
+      else outOfServiceAMTrains.push({vehicleId, lat, lon});
     }
 
+    // Render marker
     const operator = v.vehicle.vehicle?.operator_id || "";
     const vehicleLabelWithOperator = operator+vehicleLabel;
-
-    const popupContent = `
-      <b>Route:</b> ${routeName}<br>
-      <b>Destination:</b> ${destination}<br>
-      <b>Vehicle:</b> ${vehicleLabelWithOperator}<br>
-      <b>Number Plate:</b> ${licensePlate}<br>
-      <b>Speed:</b> ${speed}<br>
-      <b>Occupancy:</b> ${occupancy}
-    `;
+    const popupContent = `<b>Route:</b> ${routeName}<br><b>Destination:</b> ${destination}<br><b>Vehicle:</b> ${vehicleLabelWithOperator}<br><b>Number Plate:</b> ${licensePlate}<br><b>Speed:</b> ${speed}<br><b>Occupancy:</b> ${occupancy}`;
 
     if(vehicleMarkers[vehicleId]){
       vehicleMarkers[vehicleId].setLatLng([lat,lon]);
       vehicleMarkers[vehicleId].setPopupContent(popupContent);
-      vehicleMarkers[vehicleId].setIcon(getVehicleIcon(color, false)); // updated later
+      vehicleMarkers[vehicleId].setIcon(getVehicleIcon(color));
     } else {
-      const newMarker = L.marker([lat,lon],{icon:getVehicleIcon(color, false)});
+      const newMarker = L.marker([lat,lon],{icon:getVehicleIcon(color)});
       newMarker.bindPopup(popupContent);
       newMarker.addTo(layerGroups[typeKey]);
       vehicleMarkers[vehicleId]=newMarker;
     }
   });
 
-  // --- Compute 6-car trains ---
+  // Pair 6-car trains: one in-service AM + one out-of-service AM
   const pairedSixCars = Math.min(inServiceAMTrains.length, outOfServiceAMTrains.length);
   sixCarCount = pairedSixCars;
-
-  // Mark paired 6-car trains with indicator
-  for(let i=0; i<pairedSixCars; i++){
+  for(let i=0;i<pairedSixCars;i++){
     const inTrain = inServiceAMTrains[i];
     const outTrain = outOfServiceAMTrains[i];
     [inTrain.vehicleId, outTrain.vehicleId].forEach(id=>{
       const marker = vehicleMarkers[id];
       if(marker){
-        const currentLatLng = marker.getLatLng();
-        marker.setIcon(getVehicleIcon(vehicleColors[2], true));
-        marker.setPopupContent(marker.getPopup().getContent() + "<br><b>Consist:</b> 6-car train 🚆");
+        const oldContent = marker.getPopup().getContent();
+        marker.setPopupContent(oldContent + "<br><b>Consist:</b> 6-car train 🚆");
       }
     });
   }
@@ -239,8 +171,9 @@ async function fetchVehicles(){
     }
   });
 
+  // Update displays
   debugBox.textContent = `Last update: ${new Date().toLocaleTimeString()} | Vehicles: ${vehicles.length}`;
-  sixCarBox.textContent = `6-car trains: ${sixCarCount}`;
+  if(sixCarBox) sixCarBox.textContent = `6-car trains: ${sixCarCount}`;
 }
 
 // --- Init ---
