@@ -205,21 +205,36 @@ async function fetchVehicles(){
   debugBox.textContent=`Last update: ${new Date().toLocaleTimeString()} | Vehicles: ${vehicles.length}`;
 }
 
-// --- Add train stations ---
+// --- Train station icon ---
+const stationIcon = L.icon({
+  iconUrl: 'station-logo.png',  // Place your logo in the GitHub repo and use this path
+  iconSize: [32, 32],           // Adjust size as needed
+  iconAnchor: [16, 32],         // The point of the icon which will correspond to marker's location
+  popupAnchor: [0, -32]         // Where the popup opens relative to the icon
+});
+
+// --- Add train stations (updated) ---
 async function addTrainStations(){
-  const json=await safeFetch(`${stopsUrl}?type=train`);
+  const json = await safeFetch(`${stopsUrl}?type=train`);
   if(!json?.data) return;
+
   json.data.forEach(stop=>{
-    const lat=stop.attributes.latitude;
-    const lon=stop.attributes.longitude;
-    const name=stop.attributes.stop_name;
-    const stopId=stop.id;
-    const marker=L.marker([lat,lon],{stopName:name});
+    const lat = stop.attributes.latitude;
+    const lon = stop.attributes.longitude;
+    const name = stop.attributes.stop_name;
+    const stopId = stop.id;
+
+    // Use custom icon
+    const marker = L.marker([lat, lon], {icon: stationIcon, stopName: name});
     marker.addTo(map);
-    marker.on("click",()=>updateStationPopup(marker, stopId));
-    stationMarkers[stopId]=marker;
+
+    // On click, update popup with next departures
+    marker.on("click", () => updateStationPopup(marker, stopId));
+
+    stationMarkers[stopId] = marker;
   });
 }
+
 
 // --- Init ---
 (async function init(){
@@ -227,3 +242,4 @@ async function addTrainStations(){
   await fetchVehicles();
   setInterval(fetchVehicles,15000);
 })();
+
