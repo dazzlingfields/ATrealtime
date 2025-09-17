@@ -1,4 +1,4 @@
-// ================== v4.5 - Real-time Vehicle Tracking (with refined 6-car counter) ==================
+// ================== v4.6 - Real-time Vehicle Tracking (Separate 6-car Counter) ==================
 
 // --- API endpoints ---
 const proxyBaseUrl = "https://atrealtime.vercel.app";
@@ -39,6 +39,7 @@ L.control.layers(baseMaps).addTo(map);
 
 // --- Globals ---
 const debugBox = document.getElementById("debug");
+const sixCarBox = document.getElementById("sixCarCounter"); // separate counter display
 const routes = {};
 const trips = {};
 const vehicleMarkers = {};
@@ -115,6 +116,7 @@ async function fetchVehicles(){
   const json = await safeFetch(realtimeUrl);
   if(!json) {
     debugBox.textContent = "Error fetching vehicle data";
+    sixCarBox.textContent = "6-car trains: N/A";
     return;
   }
 
@@ -136,7 +138,6 @@ async function fetchVehicles(){
 
   const results = await Promise.all(dataPromises);
 
-  // Prepare lists for 6-car detection
   const inServiceAMTrains = [];
   const outOfServiceAMTrains = [];
 
@@ -170,17 +171,17 @@ async function fetchVehicles(){
       routeName = routeInfo.route_short_name || "N/A";
     }
 
-    // --- Speed sanity with higher tolerance ---
+    // Speed sanity with higher tolerance
     let speedKmh = v.vehicle.position.speed ? v.vehicle.position.speed*3.6 : null;
     if(speedKmh!==null){
       let maxSpeed = typeKey==="bus"?150:typeKey==="train"?200:typeKey==="ferry"?120:250;
       if(speedKmh>=0 && speedKmh<=maxSpeed) speed = speedKmh.toFixed(1)+" km/h";
     }
 
-    // --- Classify for 6-car detection ---
-    if(vehicleLabel.includes("AM")) {
-      if(typeKey === "train") inServiceAMTrains.push({vehicleId, lat, lon});
-      else if(typeKey === "other") outOfServiceAMTrains.push({vehicleId, lat, lon});
+    // Classify for 6-car detection
+    if(vehicleLabel.includes("AM")){
+      if(typeKey==="train") inServiceAMTrains.push({vehicleId, lat, lon});
+      else if(typeKey==="other") outOfServiceAMTrains.push({vehicleId, lat, lon});
     }
 
     const operator = v.vehicle.vehicle?.operator_id || "";
@@ -207,7 +208,7 @@ async function fetchVehicles(){
     }
   });
 
-  // --- Compute 6-car trains ---
+  // Compute 6-car trains
   inServiceAMTrains.forEach(inTrain=>{
     outOfServiceAMTrains.forEach(outTrain=>{
       const distance = map.distance([inTrain.lat, inTrain.lon],[outTrain.lat, outTrain.lon]);
@@ -223,7 +224,8 @@ async function fetchVehicles(){
     }
   });
 
-  debugBox.textContent = `Last update: ${new Date().toLocaleTimeString()} | Vehicles: ${vehicles.length} | 6-car trains: ${sixCarCount}`;
+  debugBox.textContent = `Last update: ${new Date().toLocaleTimeString()} | Vehicles: ${vehicles.length}`;
+  sixCarBox.textContent = `6-car trains: ${sixCarCount}`;
 }
 
 // --- Init ---
