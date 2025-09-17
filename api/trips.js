@@ -3,7 +3,7 @@ export default async function handler(req, res) {
     const { id } = req.query;
     const url = id
       ? `https://api.at.govt.nz/gtfs/v3/trips/${id}`
-      : "https://api.at.govt.nz/gtfs/v3/trips`;
+      : "https://api.at.govt.nz/gtfs/v3/trips"; // fixed
 
     const response = await fetch(url, {
       headers: { "Ocp-Apim-Subscription-Key": process.env.AT_API_KEY }
