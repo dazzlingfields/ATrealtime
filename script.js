@@ -1,4 +1,4 @@
-// ================== v4.5 - Real-time Vehicle Tracking (6-car counter heuristic) ==================
+// ================== v4.5 - Real-time Vehicle Tracking (with refined 6-car counter) ==================
 
 // --- API endpoints ---
 const proxyBaseUrl = "https://atrealtime.vercel.app";
@@ -52,7 +52,7 @@ const layerGroups = {
   other: L.layerGroup().addTo(map)
 };
 
-// --- Checkboxes ---
+// --- Layer toggles ---
 ["bus","train","ferry","other"].forEach(type=>{
   const checkbox = document.getElementById(type+"-checkbox");
   if(checkbox){
@@ -110,16 +110,6 @@ async function fetchTripById(tripId){
   return null;
 }
 
-// --- Haversine for 6-car detection ---
-function haversine(lat1, lon1, lat2, lon2){
-  const R = 6371000;
-  const toRad = d=>d*Math.PI/180;
-  const dLat = toRad(lat2-lat1);
-  const dLon = toRad(lon2-lon1);
-  const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)**2;
-  return 2*R*Math.asin(Math.sqrt(a));
-}
-
 // --- Fetch vehicles ---
 async function fetchVehicles(){
   const json = await safeFetch(realtimeUrl);
@@ -131,9 +121,6 @@ async function fetchVehicles(){
   const vehicles = json?.response?.entity || json?.entity || [];
   const newVehicleIds = new Set();
   sixCarCount = 0;
-
-  const trainInService = [];
-  const trainOutOfService = [];
 
   const dataPromises = vehicles.map(v=>{
     const vehicleId = v.vehicle?.vehicle?.id;
@@ -148,6 +135,10 @@ async function fetchVehicles(){
   });
 
   const results = await Promise.all(dataPromises);
+
+  // Prepare lists for 6-car detection
+  const inServiceAMTrains = [];
+  const outOfServiceAMTrains = [];
 
   results.forEach(result=>{
     const [routeInfo, tripInfo, v, vehicleId] = result;
@@ -179,11 +170,17 @@ async function fetchVehicles(){
       routeName = routeInfo.route_short_name || "N/A";
     }
 
-    // Speed sanity
+    // --- Speed sanity with higher tolerance ---
     let speedKmh = v.vehicle.position.speed ? v.vehicle.position.speed*3.6 : null;
     if(speedKmh!==null){
-      let maxSpeed = typeKey==="bus"?100:typeKey==="train"?150:typeKey==="ferry"?60:160;
+      let maxSpeed = typeKey==="bus"?150:typeKey==="train"?200:typeKey==="ferry"?120:250;
       if(speedKmh>=0 && speedKmh<=maxSpeed) speed = speedKmh.toFixed(1)+" km/h";
+    }
+
+    // --- Classify for 6-car detection ---
+    if(vehicleLabel.includes("AM")) {
+      if(typeKey === "train") inServiceAMTrains.push({vehicleId, lat, lon});
+      else if(typeKey === "other") outOfServiceAMTrains.push({vehicleId, lat, lon});
     }
 
     const operator = v.vehicle.vehicle?.operator_id || "";
@@ -208,24 +205,13 @@ async function fetchVehicles(){
       newMarker.addTo(layerGroups[typeKey]);
       vehicleMarkers[vehicleId]=newMarker;
     }
-
-    // Collect trains for 6-car heuristic
-    if(typeKey==="train"){
-      const inService = !!v.vehicle.trip?.route_id;
-      const trainEntry = {id: vehicleId, lat, lon, speed: speedKmh||0};
-      if(inService) trainInService.push(trainEntry);
-      else trainOutOfService.push(trainEntry);
-    }
   });
 
-  // --- 6-car detection ---
-  trainInService.forEach(inTrain=>{
-    trainOutOfService.forEach(outTrain=>{
-      const dist = haversine(inTrain.lat, inTrain.lon, outTrain.lat, outTrain.lon);
-      const speedDiff = Math.abs(inTrain.speed - outTrain.speed);
-      if(dist < 200 && speedDiff < 25){
-        sixCarCount++;
-      }
+  // --- Compute 6-car trains ---
+  inServiceAMTrains.forEach(inTrain=>{
+    outOfServiceAMTrains.forEach(outTrain=>{
+      const distance = map.distance([inTrain.lat, inTrain.lon],[outTrain.lat, outTrain.lon]);
+      if(distance < 150) sixCarCount++;
     });
   });
 
