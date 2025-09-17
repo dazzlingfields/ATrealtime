@@ -33,178 +33,103 @@ document.getElementById("train-checkbox").addEventListener("change", e => toggle
 document.getElementById("ferry-checkbox").addEventListener("change", e => toggleLayer("ferry", e.target.checked));
 document.getElementById("other-checkbox").addEventListener("change", e => toggleLayer("other", e.target.checked));
 
-function toggleLayer(type, visible) {
-    if (visible) map.addLayer(layerGroups[type]);
-    else map.removeLayer(layerGroups[type]);
+function toggleLayer(layerKey, isVisible) {
+    if (isVisible) {
+        map.addLayer(layerGroups[layerKey]);
+    } else {
+        map.removeLayer(layerGroups[layerKey]);
+    }
 }
 
-// Vehicle colours based on GTFS route type
-const vehicleColors = {
-    3: "#007bff", // bus
-    2: "#dc3545", // train
-    4: "#ffc107", // ferry
-    default: "#6c757d" // other/unknown
-};
+// --- Helper Functions ---
+function getVehicleIcon(color) {
+    return L.divIcon({
+        className: 'custom-div-icon',
+        html: `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <circle cx="12" cy="12" r="10" fill="${color}" stroke="#fff" stroke-width="2"/>
+                <path d="M12 6L12 18" stroke="#fff" stroke-width="2" stroke-linecap="round"/>
+                <path d="M9 9L12 6L15 9" stroke="#fff" stroke-width="2" stroke-linecap="round"/>
+              </svg>`,
+        iconSize: [24, 24],
+        iconAnchor: [12, 12],
+        popupAnchor: [0, -12]
+    });
+}
 
-// Occupancy status labels
-const occupancyLabels = {
-    0: "Empty",
-    1: "Many Seats Available",
-    2: "Few Seats Available",
-    3: "Standing Room Only",
-    4: "Crushed Standing Room Only",
-    5: "Full",
-    6: "Not Accepting Passengers"
-};
-
-// Custom SVG icon for vehicles
-const getVehicleIcon = (color) => L.divIcon({
-    className: 'vehicle-icon',
-    html: `<div style="background-color: ${color}; width: 12px; height: 12px; border-radius: 50%; border: 2px solid white;"></div>`,
-    iconSize: [16, 16],
-    iconAnchor: [8, 8]
-});
-
-// --- Helper functions for fetching API data with caching ---
 async function fetchRouteById(routeId) {
-    if (routes[routeId]) {
-        return routes[routeId];
-    }
-    
+    if (routes[routeId]) return routes[routeId];
     try {
-        const res = await fetch(`${routesUrl}/${routeId}`);
-        if (!res.ok) {
-            console.error(`Failed to fetch route ${routeId}: ${res.status} ${res.statusText}`);
-            return null;
+        const response = await fetch(`${routesUrl}?route_id=${routeId}`);
+        const data = await response.json();
+        if (data.length > 0) {
+            routes[routeId] = data[0];
+            return data[0];
         }
-        const json = await res.json();
-        const routeData = json.data?.attributes;
-
-        if (routeData) {
-            routes[routeId] = routeData;
-            return routeData;
-        }
-        return null;
     } catch (err) {
         console.error(`Error fetching route ${routeId}:`, err);
-        return null;
     }
+    return null;
 }
 
 async function fetchTripById(tripId) {
-    if (trips[tripId]) {
-        return trips[tripId];
-    }
-
+    if (trips[tripId]) return trips[tripId];
     try {
-        const res = await fetch(`${tripsUrl}/${tripId}`);
-        if (!res.ok) {
-            console.error(`Failed to fetch trip ${tripId}: ${res.status} ${res.statusText}`);
-            return null;
+        const response = await fetch(`${tripsUrl}?trip_id=${tripId}`);
+        const data = await response.json();
+        if (data.length > 0) {
+            trips[tripId] = data[0];
+            return data[0];
         }
-        const json = await res.json();
-        const tripData = json.data?.attributes;
-
-        if (tripData) {
-            trips[tripId] = tripData;
-            return tripData;
-        }
-        return null;
     } catch (err) {
         console.error(`Error fetching trip ${tripId}:`, err);
-        return null;
     }
+    return null;
 }
 
-// --- Main Loop: Fetch and Display Real-time Vehicle Data ---
+// --- Main Logic ---
 async function fetchVehicles() {
     try {
-        const res = await fetch(realtimeUrl);
-        if (!res.ok) {
-            throw new Error(`Failed to fetch vehicles: ${res.status} ${res.statusText}`);
-        }
-        const json = await res.json();
-        const vehicles = json.response.entity || [];
+        const response = await fetch(realtimeUrl);
+        const { vehicles } = await response.json();
         const newVehicleIds = new Set();
         
-        const dataPromises = vehicles.map(v => {
-            const vehicleId = v.vehicle?.vehicle?.id;
-            const routeId = v.vehicle?.trip?.route_id;
-            const tripId = v.vehicle?.trip?.trip_id;
-            
-            return Promise.all([
-                routeId ? fetchRouteById(routeId) : null,
-                tripId ? fetchTripById(tripId) : null,
-                v,
-                vehicleId
-            ]);
-        });
-
-        const results = await Promise.all(dataPromises);
-
-        results.forEach(result => {
-            const [routeInfo, tripInfo, v, vehicleId] = result;
-            if (!v.vehicle || !v.vehicle.position || !vehicleId) return;
+        vehicles.forEach(vehicle => {
+            const vehicleId = vehicle.id;
+            const { lat, lon, bearing, route_id, trip_id, occupancy_status, speed } = vehicle.position;
+            const { service_type } = vehicle;
             
             newVehicleIds.add(vehicleId);
 
-            const lat = v.vehicle.position.latitude;
-            const lon = v.vehicle.position.longitude;
-            const routeId = v.vehicle.trip?.route_id;
-            const vehicleLabel = v.vehicle.vehicle?.label || "N/A";
-            const licensePlate = v.vehicle.vehicle?.license_plate || "N/A";
-            const occupancyStatus = v.vehicle.occupancy_status;
-            
-            let typeKey = "other";
-            let color = vehicleColors.default;
-            let routeName = "N/A";
-            let destination = "N/A";
-            let speed = "N/A";
-            const occupancy = occupancyStatus !== undefined ? occupancyLabels[occupancyStatus] || "Unknown" : "N/A";
+            let color = '#ccc';
+            let typeKey = 'other';
+            let occupancy = 'Not available';
 
-            // Determine vehicle type, colour and name from GTFS data
-            if (routeInfo) {
-                const routeType = routeInfo.route_type;
-                switch (routeType) {
-                    case 3: typeKey = "bus"; color = vehicleColors[3]; break;
-                    case 2: typeKey = "train"; color = vehicleColors[2]; break;
-                    case 4: typeKey = "ferry"; color = vehicleColors[4]; break;
-                }
-                routeName = routeInfo.route_short_name || "N/A";
-            }
-            
-            // Get destination from trip data
-            if (tripInfo) {
-                destination = tripInfo.trip_headsign || "N/A";
+            if (service_type === 'bus') {
+                typeKey = 'bus';
+                color = '#007bff';
+            } else if (service_type === 'train') {
+                typeKey = 'train';
+                color = '#28a745';
+            } else if (service_type === 'ferry') {
+                typeKey = 'ferry';
+                color = '#dc3545';
             }
 
-            // Custom logic for Te Huia train
-            if (routeId === "15636") {
-                routeName = "Te Huia (Simulated)";
-                color = "#e67e22"; // Distinctive orange for Te Huia
+            switch (occupancy_status) {
+                case 'EMPTY': occupancy = 'Empty'; break;
+                case 'MANY_SEATS_AVAILABLE': occupancy = 'Many seats available'; break;
+                case 'FEW_SEATS_AVAILABLE': occupancy = 'Few seats available'; break;
+                case 'STANDING_ROOM_ONLY': occupancy = 'Standing room only'; break;
+                case 'CRUSHED_STANDING_ROOM_ONLY': occupancy = 'Full'; break;
+                case 'FULL': occupancy = 'Full'; break;
             }
 
-            // Sanity check and format speed values
-            let speedKmh = v.vehicle.position.speed ? v.vehicle.position.speed * 3.6 : null;
-            if (speedKmh !== null) {
-                let maxSpeed = 160; // Default max speed
-                if (typeKey === "bus") maxSpeed = 100;
-                else if (typeKey === "train") maxSpeed = 120;
-                else if (typeKey === "ferry") maxSpeed = 60;
-                
-                if (speedKmh >= 0 && speedKmh <= maxSpeed) {
-                    speed = speedKmh.toFixed(1) + " km/h";
-                } else {
-                    speed = "N/A";
-                }
-            }
-            
+            const speedKmh = speed ? (speed * 3.6).toFixed(1) : 'N/A';
             const popupContent = `
-                <b>Route:</b> ${routeName}<br>
-                <b>Destination:</b> ${destination}<br>
-                <b>Vehicle:</b> ${vehicleLabel}<br>
-                <b>Number Plate:</b> ${licensePlate}<br>
-                <b>Speed:</b> ${speed}<br>
+                <b>Vehicle:</b> ${vehicleId}<br/>
+                <b>Speed:</b> ${speedKmh} km/h<br/>
+                <b>Bearing:</b> ${bearing}°<br/>
+                <b>Type:</b> ${service_type.charAt(0).toUpperCase() + service_type.slice(1)}<br/>
                 <b>Occupancy:</b> ${occupancy}
             `;
             
@@ -241,6 +166,13 @@ async function fetchVehicles() {
 
 // Initial fetch and set interval for updates
 (async function init() {
+    // FIX: Force Leaflet to recalculate map size after a short delay
+    // This is crucial if the map container's size is not immediately available
+    // when the script runs (e.g., if it's in a hidden tab or a modal).
+    setTimeout(() => {
+        map.invalidateSize();
+    }, 400);
+
     fetchVehicles();
     setInterval(fetchVehicles, 15000);
 })();
