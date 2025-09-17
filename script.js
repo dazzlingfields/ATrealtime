@@ -1,4 +1,4 @@
-// Version 2.4
+// Version 2.5
 // --- API Key and Endpoints ---
 const atApiKey = "18e2ee8ee75d4e6ca7bd446ffa9bd50f";
 const realtimeUrl = "https://api.at.govt.nz/realtime/legacy";
@@ -55,6 +55,7 @@ document.getElementById("ferry-checkbox").addEventListener("change", e => toggle
 document.getElementById("other-checkbox").addEventListener("change", e => toggleLayer("other", e.target.checked));
 document.getElementById("at-train-lines-checkbox").addEventListener("change", e => toggleLinesLayer(trainLinesLayerGroup, e.target.checked));
 document.getElementById("te-huia-checkbox").addEventListener("change", e => toggleLinesLayer(teHuiaLayerGroup, e.target.checked));
+document.getElementById("te-huia-dot-checkbox").addEventListener("change", e => toggleLinesLayer(teHuiaDotLayerGroup, e.target.checked));
 
 function toggleLayer(type, visible) {
     if (visible) map.addLayer(layerGroups[type]);
@@ -230,7 +231,8 @@ async function drawTeHuiaLines() {
                 teHuiaShapes[shape.shape_id].push({
                     lat: parseFloat(shape.shape_pt_lat),
                     lon: parseFloat(shape.shape_pt_lon),
-                    seq: parseInt(shape.shape_pt_sequence)
+                    seq: parseInt(shape.shape_pt_sequence),
+                    dist: parseFloat(shape.shape_dist_traveled)
                 });
             }
         });
