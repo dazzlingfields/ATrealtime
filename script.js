@@ -1,4 +1,4 @@
-// Version 2.5
+// Version 2.7
 // --- API Key and Endpoints ---
 const atApiKey = "18e2ee8ee75d4e6ca7bd446ffa9bd50f";
 const realtimeUrl = "https://api.at.govt.nz/realtime/legacy";
@@ -7,7 +7,8 @@ const tripsUrl = "https://api.at.govt.nz/gtfs/v3/trips";
 const shapesUrl = "https://api.at.govt.nz/gtfs/v3/shapes";
 
 // --- Set up the Map ---
-const map = L.map("map").setView([-36.8485, 174.7633], 10);
+// Updated the default zoom level from 10 to 12 for a closer view
+const map = L.map("map").setView([-36.8485, 174.7633], 12);
 
 // Define the different base maps
 const baseMaps = {
@@ -43,28 +44,19 @@ const layerGroups = {
     other: L.layerGroup().addTo(map)
 };
 
-// Layer group for train lines
-const trainLinesLayerGroup = L.layerGroup().addTo(map);
+// Te Huia line and dot layers, now permanently on
 const teHuiaLayerGroup = L.layerGroup().addTo(map);
-const teHuiaDotLayerGroup = L.layerGroup().addTo(map); // New layer for the simulated dot
+const teHuiaDotLayerGroup = L.layerGroup().addTo(map);
 
 // Checkbox handlers to toggle layers
 document.getElementById("bus-checkbox").addEventListener("change", e => toggleLayer("bus", e.target.checked));
 document.getElementById("train-checkbox").addEventListener("change", e => toggleLayer("train", e.target.checked));
 document.getElementById("ferry-checkbox").addEventListener("change", e => toggleLayer("ferry", e.target.checked));
 document.getElementById("other-checkbox").addEventListener("change", e => toggleLayer("other", e.target.checked));
-document.getElementById("at-train-lines-checkbox").addEventListener("change", e => toggleLinesLayer(trainLinesLayerGroup, e.target.checked));
-document.getElementById("te-huia-checkbox").addEventListener("change", e => toggleLinesLayer(teHuiaLayerGroup, e.target.checked));
-document.getElementById("te-huia-dot-checkbox").addEventListener("change", e => toggleLinesLayer(teHuiaDotLayerGroup, e.target.checked));
 
 function toggleLayer(type, visible) {
     if (visible) map.addLayer(layerGroups[type]);
     else map.removeLayer(layerGroups[type]);
-}
-
-function toggleLinesLayer(layerGroup, visible) {
-    if (visible) map.addLayer(layerGroup);
-    else map.removeLayer(layerGroup);
 }
 
 // Base map selector handler
@@ -139,47 +131,6 @@ async function fetchTripById(tripId) {
     } catch (err) {
         console.error(`Error fetching trip ${tripId}:`, err);
         return null;
-    }
-}
-
-async function fetchTrainLines() {
-    if (Object.keys(shapes).length > 0) return; // Only fetch once
-    try {
-        const res = await fetch(`${shapesUrl}?filter[route_type]=2`, {
-            headers: { "Ocp-Apim-Subscription-Key": atApiKey }
-        });
-        if (!res.ok) {
-            console.error(`Failed to fetch train shapes: ${res.status} ${res.statusText}`);
-            return;
-        }
-        const json = await res.json();
-        const shapeData = json.data || [];
-        
-        // Group points by shape_id
-        shapeData.forEach(shape => {
-            const shapeId = shape.attributes.shape_id;
-            const lat = shape.attributes.shape_pt_lat;
-            const lon = shape.attributes.shape_pt_lon;
-            const sequence = shape.attributes.shape_pt_sequence;
-
-            if (!shapes[shapeId]) {
-                shapes[shapeId] = [];
-            }
-            shapes[shapeId].push([lat, lon, sequence]);
-        });
-        
-        // Draw the lines
-        for (const shapeId in shapes) {
-            const points = shapes[shapeId].sort((a, b) => a[2] - b[2]).map(p => [p[0], p[1]]);
-            L.polyline(points, {
-                color: '#8b0000', // Dark red for train lines
-                weight: 3,
-                opacity: 0.7
-            }).addTo(trainLinesLayerGroup);
-        }
-
-    } catch (err) {
-        console.error(`Error fetching train lines:`, err);
     }
 }
 
@@ -521,7 +472,7 @@ async function fetchVehicles() {
                     colour = vehicleColors[2];
                 }
                 // The route name will be "Unknown" but the vehicle will be colored correctly.
-                routeName = tripInfo?.trip_headsign || "Unknown";
+                routeName = tripInfo?.trip_headsign || "N/A";
 
             } else {
                 // Truly "Out of Service" or unassigned vehicle
@@ -598,8 +549,7 @@ async function fetchVehicles() {
     }
 
     // 2. Start drawing static and dynamic elements
-    await fetchTrainLines(); // Fetch and draw the Auckland train lines once
-    await drawTeHuiaLines(); // Fetch and draw the Te Huia lines from the uploaded data
+    await drawTeHuiaLines(); // Draw the Te Huia lines from the uploaded data
     await fetchVehicles(); // Start fetching real-time data for AT services
     updateTeHuiaDot(); // Start simulating the Te Huia dot
     
