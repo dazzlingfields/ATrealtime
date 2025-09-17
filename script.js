@@ -2,11 +2,13 @@
 const proxyBaseUrl = "https://atrealtime.vercel.app";  
 const corsProxy = "https://api.allorigins.win/raw?url="; // CORS fix
 
-// GTFS endpoints
-const realtimeUrl = `${corsProxy}${encodeURIComponent(proxyBaseUrl + "/api/realtime")}`;
-const routesUrl   = `${corsProxy}${encodeURIComponent(proxyBaseUrl + "/api/routes")}`;
-const tripsUrl    = `${corsProxy}${encodeURIComponent(proxyBaseUrl + "/api/trips")}`;
-// Ferry endpoint
+// v3.9 - GitHub Pages compatible, uses serverless proxy
+const proxyBaseUrl = "https://atrealtime.vercel.app";
+const realtimeUrl = `${proxyBaseUrl}/api/realtime`;
+const routesUrl   = `${proxyBaseUrl}/api/routes`;
+const tripsUrl    = `${proxyBaseUrl}/api/trips`;
+const stopsUrl    = `${proxyBaseUrl}/api/stops`;
+
 const ferryUrl    = `${corsProxy}${encodeURIComponent("https://api.at.govt.nz/realtime/legacy/ferrypositions")}`;
 
 // --- Map setup ---
@@ -248,3 +250,4 @@ async function fetchFerries() {
     debugBox.textContent = `Last update: ${new Date().toLocaleTimeString()}`;
   },15000);
 })();
+
