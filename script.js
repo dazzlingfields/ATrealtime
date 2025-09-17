@@ -135,7 +135,7 @@ async function initializeMap() {
 
         // Map layers
         const osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap contributors' });
-        const lightLayer2 = L.tileLayer('https://{s}.tile.openstreetmap.fr/osmfr/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap France' });
+        const lightLayer2 = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', { attribution: '© CartoDB' });
         const darkLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { attribution: '© CartoDB' });
         const satelliteLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { attribution: 'Tiles © Esri' });
 
@@ -147,18 +147,17 @@ async function initializeMap() {
         outOfServiceLayer.addTo(map);
 
         // Base map controls
-        const mapRadios = document.querySelectorAll('input[name="map-style"]');
-        mapRadios.forEach(radio => {
-            radio.addEventListener('change', () => {
-                map.eachLayer(layer => {
-                    if (layer !== busLayer && layer !== trainLayer && layer !== ferryLayer && layer !== outOfServiceLayer) map.removeLayer(layer);
-                });
-                if (document.getElementById('light-map').checked) osmLayer.addTo(map);
-                if (document.getElementById('satellite-map').checked) satelliteLayer.addTo(map);
-                if (document.getElementById('dark-map').checked) darkLayer.addTo(map);
-                if (document.getElementById('light-map-2')?.checked) lightLayer2.addTo(map);
-            });
-        });
+    const mapRadios = document.querySelectorAll('input[name="map-style"]');
+    	mapRadios.forEach(radio => radio.addEventListener('change', () => {
+        map.eachLayer(layer => {
+        if (![busLayer, trainLayer, ferryLayer, outOfServiceLayer].includes(layer)) map.removeLayer(layer);
+    });
+        if (document.getElementById('light-map').checked) lightLayer1.addTo(map);
+        if (document.getElementById('light-map-2').checked) lightLayer2.addTo(map);
+        if (document.getElementById('dark-map').checked) darkLayer.addTo(map);
+        if (document.getElementById('satellite-map').checked) satelliteLayer.addTo(map);
+}));
+
 
         // Add a second light map option dynamically
         const light2Label = document.createElement('label');
@@ -184,4 +183,16 @@ async function initializeMap() {
     }
 }
 
+try {
+    const response = await fetch(realtimeUrl);
+    if (!response.ok) throw new Error('Network response not ok');
+    const data = await response.json();
+    renderVehicles(data);
+} catch (err) {
+    console.error('Error fetching vehicles:', err);
+    document.getElementById('status-display').textContent = 'Connection Error';
+}
+
+
 initializeMap();
+
