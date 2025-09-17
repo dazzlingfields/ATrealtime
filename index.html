@@ -28,13 +28,21 @@
 </head>
 <body>
   <div id="map"></div>
-  <div id="controls">
-  
-    <div id="debug">Initializing...</div>
+<div id="controls">
+  <div class="control-group">
+    <h4>Vehicle Display</h4>
+    <label><input type="checkbox" id="bus-checkbox" checked> Buses</label>
+    <label><input type="checkbox" id="train-checkbox" checked> Trains</label>
+    <label><input type="checkbox" id="ferry-checkbox" checked> Ferries</label>
+    <label><input type="checkbox" id="other-checkbox" checked> Other</label>
+  </div>
+  <div id="debug">Waiting for data...</div>
+</div>
   </div>
 
   <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
   <script src="script.js"></script>
 </body>
 </html>
+
 
