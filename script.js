@@ -1,10 +1,11 @@
-// ================== v4.7 - Real-time Vehicle Tracking (AM Pairing with JSON Bus Types) ==================
+// ================== v4.7 - Real-time Vehicle Tracking with Bus Type JSON ==================
 
 // --- API endpoints ---
 const proxyBaseUrl = "https://atrealtime.vercel.app";
 const realtimeUrl = `${proxyBaseUrl}/api/realtime`;
 const routesUrl   = `${proxyBaseUrl}/api/routes`;
 const tripsUrl    = `${proxyBaseUrl}/api/trips`;
+const busTypesJsonUrl = "./bus_types.json"; // JSON file in same folder
 
 // --- Map setup ---
 const map = L.map("map").setView([-36.8485, 174.7633], 12);
@@ -22,7 +23,7 @@ const dark = L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}
   attribution: "© OpenStreetMap contributors © CARTO"
 });
 const satellite = L.tileLayer("https://{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}", {
-  subdomains: ["mt0", "mt1", "mt2", "mt3"],
+  subdomains: ["mt0","mt1","mt2","mt3"],
   attribution: "© Google"
 });
 
@@ -34,7 +35,7 @@ const debugBox = document.getElementById("debug");
 const routes = {};
 const trips = {};
 const vehicleMarkers = {};
-let busTypes = {};  // Loaded from JSON
+let busTypes = {}; // Will hold JSON data
 
 // --- Layer groups ---
 const layerGroups = {
@@ -79,12 +80,6 @@ async function safeFetch(url){
     console.error(err);
     return null;
   }
-}
-
-// --- Load bus types from JSON ---
-async function loadBusTypes() {
-  const data = await safeFetch("/busTypes.json"); // Adjust path if needed
-  if(data) busTypes = data;
 }
 
 // --- Route/Trip caching ---
@@ -140,6 +135,20 @@ function pairAMTrains(inService, outOfService){
   return pairs;
 }
 
+// --- Load bus types JSON ---
+async function loadBusTypes(){
+  const json = await safeFetch(busTypesJsonUrl);
+  if(json) busTypes = json;
+}
+
+// --- Determine bus type ---
+function getBusType(vehicleLabel){
+  for(const type in busTypes){
+    if(busTypes[type].bus_numbers.includes(vehicleLabel)) return type;
+  }
+  return "Bus"; // default generic
+}
+
 // --- Fetch vehicles ---
 async function fetchVehicles(){
   const json = await safeFetch(realtimeUrl);
@@ -155,16 +164,12 @@ async function fetchVehicles(){
     const vehicleId = v.vehicle?.vehicle?.id;
     const routeId = v.vehicle?.trip?.route_id;
     const tripId  = v.vehicle?.trip?.trip_id;
-    return Promise.all([
-      routeId ? fetchRouteById(routeId) : null,
-      tripId ? fetchTripById(tripId) : null,
-      v,
-      vehicleId
-    ]);
+    return Promise.all([routeId ? fetchRouteById(routeId) : null, tripId ? fetchTripById(tripId) : null, v, vehicleId]);
   });
 
   const results = await Promise.all(dataPromises);
 
+  // Collect AM trains
   const inServiceAMTrains = [];
   const outOfServiceAMTrains = [];
 
@@ -184,9 +189,7 @@ async function fetchVehicles(){
     let color = vehicleColors.default;
     let routeName = "N/A";
     let destination = tripInfo?.trip_headsign || v.vehicle.trip?.trip_headsign || "N/A";
-    const occupancy = occupancyStatus!==undefined
-      ? occupancyLabels[occupancyStatus] || "Unknown"
-      : "N/A";
+    const occupancy = occupancyStatus!==undefined ? occupancyLabels[occupancyStatus] || "Unknown" : "N/A";
 
     if(routeInfo){
       const routeType = routeInfo.route_type;
@@ -199,15 +202,7 @@ async function fetchVehicles(){
     }
 
     // Determine bus type from JSON
-    let busTypeName = "Unknown";
-    if(typeKey==="bus" && Object.keys(busTypes).length){
-      for(const typeName in busTypes){
-        if(busTypes[typeName].includes(vehicleLabel)){
-          busTypeName = typeName;
-          break;
-        }
-      }
-    }
+    let busType = typeKey === "bus" ? getBusType(vehicleLabel) : null;
 
     if(vehicleLabel.startsWith("AM")){
       if(typeKey==="train") inServiceAMTrains.push({vehicleId, lat, lon, speedKmh, vehicleLabel});
@@ -215,7 +210,7 @@ async function fetchVehicles(){
     }
 
     let speed = "N/A";
-    let maxSpeed = typeKey==="bus"?100:typeKey==="train"?160:typeKey==="ferry"?80:180; 
+    let maxSpeed = typeKey==="bus"?100:typeKey==="train"?160:typeKey==="ferry"?80:180;
     if(speedKmh>=0 && speedKmh<=maxSpeed) speed = speedKmh.toFixed(1)+" km/h";
 
     const operator = v.vehicle.vehicle?.operator_id || "";
@@ -225,7 +220,7 @@ async function fetchVehicles(){
       <b>Route:</b> ${routeName}<br>
       <b>Destination:</b> ${destination}<br>
       <b>Vehicle:</b> ${vehicleLabelWithOperator}<br>
-      <b>Bus Type:</b> ${busTypeName}<br>
+      <b>Type:</b> ${busType || typeKey}<br>
       <b>Number Plate:</b> ${licensePlate}<br>
       <b>Speed:</b> ${speed}<br>
       <b>Occupancy:</b> ${occupancy}
@@ -261,12 +256,13 @@ async function fetchVehicles(){
     }
   });
 
+  // Update debug
   debugBox.textContent = `Last update: ${new Date().toLocaleTimeString()} | Vehicles: ${vehicles.length}`;
 }
 
 // --- Init ---
 (async function init(){
-  await loadBusTypes();  // Load JSON first
+  await loadBusTypes(); // load JSON first
   fetchVehicles();
   setInterval(fetchVehicles, 15000);
 })();
