@@ -13,10 +13,7 @@
             font-family: Arial, sans-serif;
             color: #333;
         }
-        #map {
-            height: 100%;
-            width: 100%;
-        }
+        #map { height: 100%; width: 100%; }
         .info-panel {
             position: absolute;
             top: 10px;
@@ -27,47 +24,34 @@
             border-radius: 5px;
             box-shadow: 0 0 15px rgba(0,0,0,0.2);
         }
-        .info-panel label {
-            display: block;
-            margin-bottom: 5px;
-        }
-        .status-display {
-            font-size: 12px;
-            margin-top: 10px;
-        }
-        .map-style-selector {
-            margin-top: 10px;
-        }
-        .vehicle-icon {
-            /* Keep this as a class for the custom divIcon markers */
-        }
+        .info-panel label { display: block; margin-bottom: 5px; }
+        .status-display { font-size: 12px; margin-top: 10px; }
+        .map-style-selector { margin-top: 10px; }
+        .vehicle-icon {}
     </style>
 </head>
 <body>
+    <div id="map"></div>
 
-<div id="map"></div>
+    <div class="info-panel">
+        <h3>Vehicle Display</h3>
+        <label><input type="checkbox" id="bus-checkbox" checked> Buses</label>
+        <label><input type="checkbox" id="train-checkbox" checked> Trains</label>
+        <label><input type="checkbox" id="ferry-checkbox" checked> Ferries</label>
+        <label><input type="checkbox" id="outofservice-checkbox" checked> Out of Service</label>
 
-<div class="info-panel">
-    <h3>Vehicle Display</h3>
-    <label><input type="checkbox" id="bus-checkbox" checked> Buses</label>
-    <label><input type="checkbox" id="train-checkbox" checked> Trains</label>
-    <label><input type="checkbox" id="ferry-checkbox" checked> Ferries</label>
-    <label><input type="checkbox" id="outofservice-checkbox" checked> Out of Service</label>
+        <div class="map-style-selector">
+            <h3>Map Style</h3>
+            <label><input type="radio" name="map-style" id="light-map" checked> Light</label>
+            <label><input type="radio" name="map-style" id="light-map-2"> Light 2</label>
+            <label><input type="radio" name="map-style" id="dark-map"> Dark</label>
+            <label><input type="radio" name="map-style" id="satellite-map"> Satellite</label>
+        </div>
 
-    <div class="map-style-selector">
-        <h3>Map Style</h3>
-        <label><input type="radio" name="map-style" id="satellite-map"> Satellite</label>
-        <label><input type="radio" name="map-style" id="dark-map"> Dark</label>
-        <label><input type="radio" name="map-style" id="light-map" checked> Light</label>
+        <div id="status-display" class="status-display">Connecting...</div>
     </div>
 
-    <div id="status-display" class="status-display">
-        Connecting...
-    </div>
-</div>
-
-<script src="script.js"></script>
-<script src="tehuia_sim.js"></script>
-
+    <script src="script.js"></script>
+    <script src="tehuia_sim.js"></script>
 </body>
 </html>
