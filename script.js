@@ -1,4 +1,4 @@
-// ================== v4.6b - Real-time Vehicle Tracking ==================
+// ================== v4.6b - Optimized Real-time Vehicle Tracking ==================
 
 // --- API endpoints --- 
 const proxyBaseUrl = "https://atrealtime.vercel.app";
@@ -35,7 +35,8 @@ const debugBox = document.getElementById("debug");
 const routes = {};
 const trips = {};
 const vehicleMarkers = {};
-let busTypes = {}; // loaded from JSON
+let busTypes = {};
+let busLookup = {}; // Precomputed for fast access
 
 // --- Layer groups ---
 const layerGroups = {
@@ -82,10 +83,21 @@ async function safeFetch(url){
   }
 }
 
-// --- Load bus types JSON ---
+// --- Load bus types JSON and build lookup ---
 async function loadBusTypes(){
   const data = await safeFetch(busTypesUrl);
-  if(data) busTypes = data;
+  if(data) {
+    busTypes = data;
+    busLookup = {};
+    for(const model in data){
+      const operators = data[model];
+      for(const op in operators){
+        operators[op].forEach(num=>{
+          busLookup[op + num] = model;
+        });
+      }
+    }
+  }
 }
 
 // --- Route/Trip caching ---
@@ -126,7 +138,7 @@ function pairAMTrains(inService, outOfService){
       if(usedOut.has(outTrain.vehicleId)) return;
       const dist = distanceMeters(inTrain.lat, inTrain.lon, outTrain.lat, outTrain.lon);
       const speedDiff = Math.abs(inTrain.speedKmh - outTrain.speedKmh);
-      if(dist <= 200 && speedDiff <= 10){
+      if(dist <= 200 && speedDiff <= 15){
         if(dist < minDist){
           minDist = dist;
           bestMatch = outTrain;
@@ -141,7 +153,7 @@ function pairAMTrains(inService, outOfService){
   return pairs;
 }
 
-// --- Fetch vehicles ---
+// --- Fetch vehicles (optimized) ---
 async function fetchVehicles(){
   const json = await safeFetch(realtimeUrl);
   if(!json) {
@@ -154,10 +166,16 @@ async function fetchVehicles(){
   const inServiceAMTrains = [];
   const outOfServiceAMTrains = [];
 
+  // Pre-fetch all route and trip data in parallel
+  const routeIds = [...new Set(vehicles.map(v=>v.vehicle?.trip?.route_id).filter(Boolean))];
+  const tripIds  = [...new Set(vehicles.map(v=>v.vehicle?.trip?.trip_id).filter(Boolean))];
+  const routePromises = routeIds.map(id=>fetchRouteById(id));
+  const tripPromises  = tripIds.map(id=>fetchTripById(id));
+  await Promise.all([...routePromises, ...tripPromises]);
+
   for(const v of vehicles){
     const vehicleId = v.vehicle?.vehicle?.id;
     const routeId = v.vehicle?.trip?.route_id;
-    const tripId  = v.vehicle?.trip?.trip_id;
     if(!v.vehicle || !v.vehicle.position || !vehicleId) continue;
     newVehicleIds.add(vehicleId);
 
@@ -178,10 +196,9 @@ async function fetchVehicles(){
 
     // --- Determine type from route ---
     if(routeId){
-      const routeInfo = await fetchRouteById(routeId);
+      const routeInfo = routes[routeId];
       if(routeInfo){
-        const routeType = routeInfo.route_type;
-        switch(routeType){
+        switch(routeInfo.route_type){
           case 3: typeKey="bus"; color=vehicleColors[3]; break;
           case 2: typeKey="train"; color=vehicleColors[2]; break;
           case 4: typeKey="ferry"; color=vehicleColors[4]; break;
@@ -190,38 +207,26 @@ async function fetchVehicles(){
       }
     }
 
-// --- Bus type from JSON (updated) ---
-let busType = "";
-if(typeKey === "bus" && operator){
-  for(const model in busTypes){
-    const operators = busTypes[model];
-    for(const opCode in operators){
-      // Convert vehicleLabel to Number to match JSON
-      if(operators[opCode].includes(Number(vehicleLabel)) && opCode === operator){
-        busType = model;
-        break;
-      }
+    // --- Bus type lookup ---
+    let busType = "";
+    if(typeKey==="bus"){
+      busType = busLookup[operator + vehicleLabel] || "";
     }
-    if(busType) break;
-  }
-}
-
 
     // --- Speed clamp ---
     let speed = "N/A";
     const maxSpeed = typeKey==="bus"?100:typeKey==="train"?160:typeKey==="ferry"?80:180; 
     if(speedKmh>=0 && speedKmh<=maxSpeed) speed = speedKmh.toFixed(1)+" km/h";
 
-  const popupContent = `
-    <b>Route:</b> ${routeName}<br>
-    <b>Destination:</b> ${destination}<br>
-    <b>Vehicle:</b> ${vehicleLabelWithOperator}<br>
-    ${busType ? `<b>Bus Type:</b> ${busType}<br>` : ""}
-    <b>Number Plate:</b> ${licensePlate}<br>
-    <b>Speed:</b> ${speed}<br>
-    <b>Occupancy:</b> ${occupancy}
-`;
-
+    const popupContent = `
+      <b>Route:</b> ${routeName}<br>
+      <b>Destination:</b> ${destination}<br>
+      <b>Vehicle:</b> ${vehicleLabelWithOperator}<br>
+      ${busType ? `<b>Bus Type:</b> ${busType}<br>` : ""}
+      <b>Number Plate:</b> ${licensePlate}<br>
+      <b>Speed:</b> ${speed}<br>
+      <b>Occupancy:</b> ${occupancy}
+    `;
 
     // Track AM trains
     if(vehicleLabel.startsWith("AM")){
@@ -229,7 +234,7 @@ if(typeKey === "bus" && operator){
       else outOfServiceAMTrains.push({vehicleId, lat, lon, speedKmh, vehicleLabel});
     }
 
-    // --- Add/update marker ---
+    // --- Add/update marker efficiently ---
     if(vehicleMarkers[vehicleId]){
       vehicleMarkers[vehicleId].setLatLng([lat,lon]);
       vehicleMarkers[vehicleId].setPopupContent(popupContent);
@@ -265,10 +270,7 @@ if(typeKey === "bus" && operator){
 
 // --- Init ---
 (async function init(){
-  await loadBusTypes();   // <-- load bus type JSON
+  await loadBusTypes();   // Load bus type JSON and build lookup
   fetchVehicles();
   setInterval(fetchVehicles, 15000);
 })();
-
-
-
