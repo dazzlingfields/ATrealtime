@@ -8,7 +8,7 @@ const tripsUrl    = `${proxyBaseUrl}/api/trips`;
 const busTypesUrl = "https://raw.githubusercontent.com/dazzlingfields/ATrealtime/refs/heads/main/busTypes.json";
 
 // --- Map setup ---
-const map = L.map("map").setView([-36.8485, 174.7633], 12);
+const map = L.map("map", { zoomControl: false }).setView([-36.8485, 174.7633], 12);
 const osm = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { attribution: "© OpenStreetMap contributors" });
 const light = L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", { subdomains: "abcd", attribution: "© OpenStreetMap contributors © CARTO" }).addTo(map);
 const dark = L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", { subdomains: "abcd", attribution: "© OpenStreetMap contributors © CARTO" });
@@ -154,6 +154,7 @@ async function fetchVehicles(){
   fetchVehicles();
   setInterval(fetchVehicles,15000);
 })();
+
 
 
 
