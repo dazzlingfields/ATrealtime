@@ -1,4 +1,4 @@
-// ================== v4.6c - Real-time Vehicle Tracking (Viewport + Buffer, Retry, Cache) ==================
+// ================== v4.7 - Real-time Vehicle Tracking (Optimised API Calls) ==================
 
 // --- API endpoints --- 
 const proxyBaseUrl = "https://atrealtime.vercel.app";
@@ -21,7 +21,7 @@ L.control.layers({ "Light": light, "Dark": dark, "OSM": osm, "Satellite": satell
 // --- Globals ---
 const debugBox = document.getElementById("debug");
 const routes = {};
-const trips = {};
+const trips = {}; // Note: fetchTripById is defined but not used in the original script.
 const vehicleMarkers = {};
 let busTypes = {}; // loaded from JSON
 
@@ -63,20 +63,36 @@ async function safeFetch(url, retries=3, delay=2000){
   }
 }
 
-// --- Load bus types ---
+// --- Load initial data ---
 async function loadBusTypes(){
   const data = await safeFetch(busTypesUrl);
   if(data) busTypes = data;
 }
 
-// --- Route/Trip caching ---
-async function fetchRouteById(routeId){
-  if(routes[routeId]) return routes[routeId];
-  const json = await safeFetch(`${routesUrl}?id=${routeId}`);
-  const routeData = json?.data?.[0]?.attributes || json?.data?.attributes;
-  if(routeData) routes[routeId] = routeData;
-  return routeData || null;
+// NEW: Load all routes at once on startup
+async function loadAllRoutes() {
+  const json = await safeFetch(routesUrl);
+  if (json?.data) {
+    // Populate the 'routes' object with all route data, keyed by route ID.
+    json.data.forEach(route => {
+      // The API response for a single route wraps attributes, but the bulk response does not.
+      // This handles both formats for consistency.
+      routes[route.id || route.route_id] = route.attributes || route;
+    });
+    console.log(`Successfully loaded ${Object.keys(routes).length} routes.`);
+  } else {
+    console.error("Could not load route data.");
+  }
 }
+
+// --- Route/Trip caching ---
+
+// MODIFIED: This function no longer fetches data. It's a simple, synchronous lookup.
+function getRouteById(routeId){
+  return routes[routeId] || null;
+}
+
+// Note: This function was in the original script but was never called.
 async function fetchTripById(tripId){
   if(trips[tripId]) return trips[tripId];
   const json = await safeFetch(`${tripsUrl}?id=${tripId}`);
@@ -156,15 +172,16 @@ async function fetchVehicles(){
   const minLng = bounds.getWest() - buffer;
   const maxLng = bounds.getEast() + buffer;
 
-  for(const v of vehicles){
+  // Use Promise.all to handle vehicle processing concurrently, which is faster.
+  await Promise.all(vehicles.map(async v => {
     const vehicleId = v.vehicle?.vehicle?.id;
-    if(!v.vehicle || !v.vehicle.position || !vehicleId) continue;
+    if(!v.vehicle || !v.vehicle.position || !vehicleId) return;
 
     const lat = v.vehicle.position.latitude;
     const lon = v.vehicle.position.longitude;
 
     // Only vehicles inside viewport + buffer
-    if(lat < minLat || lat > maxLat || lon < minLng || lon > maxLng) continue;
+    if(lat < minLat || lat > maxLat || lon < minLng || lon > maxLng) return;
 
     newVehicleIds.add(vehicleId);
 
@@ -181,13 +198,12 @@ async function fetchVehicles(){
     let destination = v.vehicle.trip?.trip_headsign || "N/A";
     const occupancy = occupancyStatus!==undefined ? occupancyLabels[occupancyStatus]||"Unknown" : "N/A";
 
-    // --- Determine type from route ---
     const routeId = v.vehicle?.trip?.route_id;
-    const tripId = v.vehicle?.trip?.trip_id;
     let busType = "";
 
     if(routeId){
-      const routeInfo = await fetchRouteById(routeId);
+      // MODIFIED: No 'await' needed as getRouteById is now synchronous.
+      const routeInfo = getRouteById(routeId);
       if(routeInfo){
         switch(routeInfo.route_type){
           case 3: typeKey="bus"; color=vehicleColors[3]; break;
@@ -196,7 +212,6 @@ async function fetchVehicles(){
         }
         routeName = routeInfo.route_short_name || "N/A";
 
-        // --- Determine bus type from JSON ---
         if(typeKey==="bus"){
           for(const model in busTypes){
             const operators = busTypes[model];
@@ -208,11 +223,9 @@ async function fetchVehicles(){
         }
       }
     } else if(vehicleLabel.startsWith("AM")){
-      // still mark out-of-service bus
       typeKey = "bus";
     }
 
-    // --- Speed clamp ---
     const maxSpeed = typeKey==="bus"?100:typeKey==="train"?160:typeKey==="ferry"?80:180;
     let speed = speedKmh>=0 && speedKmh<=maxSpeed ? speedKmh.toFixed(1)+" km/h" : "N/A";
 
@@ -232,7 +245,7 @@ async function fetchVehicles(){
     }
 
     addVehicleMarker(vehicleId, lat, lon, popupContent, color, typeKey);
-  }
+  }));
 
   // Pair AM trains
   const pairs = pairAMTrains(inServiceAM, outOfServiceAM);
@@ -257,7 +270,11 @@ async function fetchVehicles(){
 
 // --- Init ---
 (async function init(){
+  // Load all static/semi-static data on startup
   await loadBusTypes();
+  await loadAllRoutes(); // NEW: Fetch all routes once.
+
+  // Now start the main vehicle fetching loop
   fetchVehicles();
   setInterval(fetchVehicles, 15000);
   map.on('moveend', fetchVehicles);
