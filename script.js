@@ -1,19 +1,19 @@
-// ================== v4.8.2 - Real-time Vehicle Tracking (Headsign + Viewport Fix + Bus Types) ==================
+// ================== v4.8.2 - Real-time Vehicle Tracking (Optimised Calls + Headsign Support) ==================
 
 // --- API endpoints --- 
 const proxyBaseUrl = "https://atrealtime.vercel.app";
-const realtimeUrl  = `${proxyBaseUrl}/api/realtime`;
-const routesUrl    = `${proxyBaseUrl}/api/routes`;
-const tripsUrl     = `${proxyBaseUrl}/api/trips`;
-const busTypesUrl  = "https://raw.githubusercontent.com/dazzlingfields/ATrealtime/refs/heads/main/busTypes.json"; // JSON file hosted on GitHub Pages
+const realtimeUrl = `${proxyBaseUrl}/api/realtime`;
+const routesUrl   = `${proxyBaseUrl}/api/routes`;
+const tripsUrl    = `${proxyBaseUrl}/api/trips`;
+const busTypesUrl = "busTypes.json"; // JSON file hosted on GitHub Pages
 
 // --- Map setup ---
 const map = L.map("map").setView([-36.8485, 174.7633], 12);
 
 // Base maps
-const osm       = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { attribution: "© OpenStreetMap contributors" });
-const light     = L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", { subdomains: "abcd", attribution: "© OpenStreetMap contributors © CARTO" }).addTo(map); 
-const dark      = L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", { subdomains: "abcd", attribution: "© OpenStreetMap contributors © CARTO" });
+const osm = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { attribution: "© OpenStreetMap contributors" });
+const light = L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", { subdomains: "abcd", attribution: "© OpenStreetMap contributors © CARTO" }).addTo(map); 
+const dark = L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", { subdomains: "abcd", attribution: "© OpenStreetMap contributors © CARTO" });
 const satellite = L.tileLayer("https://{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}", { subdomains: ["mt0","mt1","mt2","mt3"], attribution: "© Google" });
 
 L.control.layers({ "Light": light, "Dark": dark, "OSM": osm, "Satellite": satellite }).addTo(map);
@@ -21,13 +21,14 @@ L.control.layers({ "Light": light, "Dark": dark, "OSM": osm, "Satellite": satell
 // --- Globals ---
 const debugBox = document.getElementById("debug");
 const routes = {};
-const trips = {}; // cache of trip info
+const trips = {};              // cache of trip info
+const tripCacheStatus = {};    // pending/done/failed
 const vehicleMarkers = {};
-let busTypes = {}; // loaded from JSON
+let busTypes = {};             // loaded from JSON
 
 // --- Layer groups ---
 const layerGroups = {
-  bus:   L.layerGroup().addTo(map),
+  bus: L.layerGroup().addTo(map),
   train: L.layerGroup().addTo(map),
   ferry: L.layerGroup().addTo(map),
   other: L.layerGroup().addTo(map)
@@ -88,13 +89,20 @@ function getRouteById(routeId){
 
 async function fetchTripById(tripId){
   if(trips[tripId]) return trips[tripId];
+  if(tripCacheStatus[tripId] === "pending" || tripCacheStatus[tripId] === "failed") return null;
+
+  tripCacheStatus[tripId] = "pending";
   const json = await safeFetch(`${tripsUrl}?id=${tripId}`);
   const tripData = json?.data?.[0]?.attributes || json?.data?.attributes;
-  if(tripData) {
+
+  if(tripData){
     trips[tripId] = tripData;
+    tripCacheStatus[tripId] = "done";
     return tripData;
+  } else {
+    tripCacheStatus[tripId] = "failed"; // do not retry endlessly
+    return null;
   }
-  return null;
 }
 
 // --- Distance helper ---
@@ -154,7 +162,7 @@ function addVehicleMarker(vehicleId, lat, lon, popupContent, color, typeKey, inB
   }
 }
 
-// --- Fetch vehicles (always fetch all, filter in display) ---
+// --- Fetch vehicles (interval only, no viewport trigger) ---
 async function fetchVehicles(){
   const json = await safeFetch(realtimeUrl);
   if(!json){
@@ -233,7 +241,6 @@ async function fetchVehicles(){
       }
     }
 
-    // --- Check bus type from external JSON ---
     if(typeKey==="bus"){
       for(const model in busTypes){
         const operators = busTypes[model];
@@ -295,7 +302,25 @@ async function fetchVehicles(){
   fetchVehicles();
   setInterval(fetchVehicles, 15000);
 
-  // Refresh on map move
-  map.on("moveend", fetchVehicles);
+  // Only filter markers on viewport move (no API call)
+  map.on("moveend", () => {
+    const bounds = map.getBounds();
+    for (const [id, marker] of Object.entries(vehicleMarkers)) {
+      if (bounds.contains(marker.getLatLng())) {
+        if (!map.hasLayer(marker)) {
+          // detect correct type
+          let typeKey = "other";
+          for (const key in layerGroups) {
+            if (layerGroups[key].hasLayer(marker)) {
+              typeKey = key;
+              break;
+            }
+          }
+          marker.addTo(layerGroups[typeKey]);
+        }
+      } else {
+        if (map.hasLayer(marker)) map.removeLayer(marker);
+      }
+    }
+  });
 })();
-
