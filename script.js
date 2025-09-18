@@ -190,17 +190,22 @@ async function fetchVehicles(){
       }
     }
 
-    // --- Bus type from JSON (updated) ---
-    let busType = "";
-    if(typeKey==="bus"){
-      for(const model in busTypes){
-        const operators = busTypes[model];
-        if(operators[operator] && operators[operator].includes(Number(vehicleLabel))){
-          busType = model;
-          break;
-        }
+// --- Bus type from JSON (updated) ---
+let busType = "";
+if(typeKey === "bus" && operator){
+  for(const model in busTypes){
+    const operators = busTypes[model];
+    for(const opCode in operators){
+      // Convert vehicleLabel to Number to match JSON
+      if(operators[opCode].includes(Number(vehicleLabel)) && opCode === operator){
+        busType = model;
+        break;
       }
     }
+    if(busType) break;
+  }
+}
+
 
     // --- Speed clamp ---
     let speed = "N/A";
@@ -264,5 +269,6 @@ async function fetchVehicles(){
   fetchVehicles();
   setInterval(fetchVehicles, 15000);
 })();
+
 
 
