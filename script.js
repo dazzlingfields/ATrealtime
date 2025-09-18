@@ -1,4 +1,4 @@
-// ================== v4.7 - Real-time Vehicle Tracking (Optimised API Calls) ==================
+// ================== v4.8 - Real-time Vehicle Tracking (Headsign Support + Optimised Calls) ==================
 
 // --- API endpoints --- 
 const proxyBaseUrl = "https://atrealtime.vercel.app";
@@ -21,7 +21,7 @@ L.control.layers({ "Light": light, "Dark": dark, "OSM": osm, "Satellite": satell
 // --- Globals ---
 const debugBox = document.getElementById("debug");
 const routes = {};
-const trips = {}; // Note: fetchTripById is defined but not used in the original script.
+const trips = {}; // cache of trip info
 const vehicleMarkers = {};
 let busTypes = {}; // loaded from JSON
 
@@ -69,14 +69,10 @@ async function loadBusTypes(){
   if(data) busTypes = data;
 }
 
-// NEW: Load all routes at once on startup
 async function loadAllRoutes() {
   const json = await safeFetch(routesUrl);
   if (json?.data) {
-    // Populate the 'routes' object with all route data, keyed by route ID.
     json.data.forEach(route => {
-      // The API response for a single route wraps attributes, but the bulk response does not.
-      // This handles both formats for consistency.
       routes[route.id || route.route_id] = route.attributes || route;
     });
     console.log(`Successfully loaded ${Object.keys(routes).length} routes.`);
@@ -86,19 +82,19 @@ async function loadAllRoutes() {
 }
 
 // --- Route/Trip caching ---
-
-// MODIFIED: This function no longer fetches data. It's a simple, synchronous lookup.
 function getRouteById(routeId){
   return routes[routeId] || null;
 }
 
-// Note: This function was in the original script but was never called.
 async function fetchTripById(tripId){
   if(trips[tripId]) return trips[tripId];
   const json = await safeFetch(`${tripsUrl}?id=${tripId}`);
   const tripData = json?.data?.[0]?.attributes || json?.data?.attributes;
-  if(tripData) trips[tripId] = tripData;
-  return tripData || null;
+  if(tripData) {
+    trips[tripId] = tripData;
+    return tripData;
+  }
+  return null;
 }
 
 // --- Distance helper ---
@@ -172,7 +168,6 @@ async function fetchVehicles(){
   const minLng = bounds.getWest() - buffer;
   const maxLng = bounds.getEast() + buffer;
 
-  // Use Promise.all to handle vehicle processing concurrently, which is faster.
   await Promise.all(vehicles.map(async v => {
     const vehicleId = v.vehicle?.vehicle?.id;
     if(!v.vehicle || !v.vehicle.position || !vehicleId) return;
@@ -180,7 +175,6 @@ async function fetchVehicles(){
     const lat = v.vehicle.position.latitude;
     const lon = v.vehicle.position.longitude;
 
-    // Only vehicles inside viewport + buffer
     if(lat < minLat || lat > maxLat || lon < minLng || lon > maxLng) return;
 
     newVehicleIds.add(vehicleId);
@@ -195,14 +189,14 @@ async function fetchVehicles(){
     let typeKey = "other";
     let color = vehicleColors.default;
     let routeName = "N/A";
-    let destination = v.vehicle.trip?.trip_headsign || "N/A";
+    let destination = "N/A";
     const occupancy = occupancyStatus!==undefined ? occupancyLabels[occupancyStatus]||"Unknown" : "N/A";
 
     const routeId = v.vehicle?.trip?.route_id;
+    const tripId = v.vehicle?.trip?.trip_id;
     let busType = "";
 
     if(routeId){
-      // MODIFIED: No 'await' needed as getRouteById is now synchronous.
       const routeInfo = getRouteById(routeId);
       if(routeInfo){
         switch(routeInfo.route_type){
@@ -211,19 +205,42 @@ async function fetchVehicles(){
           case 4: typeKey="ferry"; color=vehicleColors[4]; break;
         }
         routeName = routeInfo.route_short_name || "N/A";
-
-        if(typeKey==="bus"){
-          for(const model in busTypes){
-            const operators = busTypes[model];
-            if(operators[operator]?.includes(vehicleNumber)){
-              busType = model;
-              break;
-            }
-          }
-        }
       }
     } else if(vehicleLabel.startsWith("AM")){
       typeKey = "bus";
+    }
+
+    // Determine headsign
+    if(v.vehicle.trip?.trip_headsign) {
+      destination = v.vehicle.trip.trip_headsign;
+    } else if(tripId) {
+      if(trips[tripId]) {
+        destination = trips[tripId].trip_headsign || "N/A";
+      } else {
+        fetchTripById(tripId).then(tripData => {
+          if(tripData) {
+            trips[tripId] = tripData;
+            const marker = vehicleMarkers[vehicleId];
+            if(marker) {
+              const oldContent = marker.getPopup().getContent();
+              marker.setPopupContent(oldContent.replace(
+                /(<b>Destination:<\/b>\s*)(N\/A)/,
+                `$1${tripData.trip_headsign || "N/A"}`
+              ));
+            }
+          }
+        });
+      }
+    }
+
+    if(typeKey==="bus"){
+      for(const model in busTypes){
+        const operators = busTypes[model];
+        if(operators[operator]?.includes(vehicleNumber)){
+          busType = model;
+          break;
+        }
+      }
     }
 
     const maxSpeed = typeKey==="bus"?100:typeKey==="train"?160:typeKey==="ferry"?80:180;
@@ -257,7 +274,7 @@ async function fetchVehicles(){
     }
   });
 
-  // Remove old markers outside viewport
+  // Remove old markers
   Object.keys(vehicleMarkers).forEach(id=>{
     if(!newVehicleIds.has(id)){
       map.removeLayer(vehicleMarkers[id]);
@@ -269,13 +286,18 @@ async function fetchVehicles(){
 }
 
 // --- Init ---
-(async function init(){
-  // Load all static/semi-static data on startup
-  await loadBusTypes();
-  await loadAllRoutes(); // NEW: Fetch all routes once.
+(function init(){
+  loadBusTypes();
+  loadAllRoutes();
 
-  // Now start the main vehicle fetching loop
+  // Start vehicle loop
   fetchVehicles();
   setInterval(fetchVehicles, 15000);
-  map.on('moveend', fetchVehicles);
+
+  // Debounced map move
+  let fetchTimeout;
+  map.on("moveend", () => {
+    clearTimeout(fetchTimeout);
+    fetchTimeout = setTimeout(fetchVehicles, 2000);
+  });
 })();
