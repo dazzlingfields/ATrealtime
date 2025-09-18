@@ -109,17 +109,18 @@ async function fetchVehicles(){
     }
 
 if (typeKey === "bus") {
-  for (const model in busTypes) {
-    const operators = busTypes[model];
-    for (const opCode in operators) {
-      if (opCode === operator && operators[opCode].includes(vehicleNumber)) {
+  const vehicleNumber = Number(vehicleLabel); // ensure it's a number
+  if (busTypes) {
+    for (const model in busTypes) {
+      const operators = busTypes[model];
+      if (operators[operator]?.includes(vehicleNumber)) {
         busType = model;
         break;
       }
     }
-    if (busType) break;
   }
 }
+
 
 
     
@@ -155,6 +156,7 @@ if (typeKey === "bus") {
   fetchVehicles();
   setInterval(fetchVehicles,15000);
 })();
+
 
 
 
