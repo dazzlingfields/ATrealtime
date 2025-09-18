@@ -108,18 +108,19 @@ async function fetchVehicles(){
       });
     }
 
-  if(typeKey==="bus"){
-    for(const model in busTypes){
-        const ops = busTypes[model];
-        for(const opCode in ops){
-            if(ops[opCode].includes(vehicleNumber)){
-                busType = model;
-                break;
-            }
-        }
-        if(busType) break;
+if (typeKey === "bus") {
+  for (const model in busTypes) {
+    const operators = busTypes[model];
+    for (const opCode in operators) {
+      if (opCode === operator && operators[opCode].includes(vehicleNumber)) {
+        busType = model;
+        break;
+      }
     }
+    if (busType) break;
+  }
 }
+
 
     
 
@@ -154,6 +155,7 @@ async function fetchVehicles(){
   fetchVehicles();
   setInterval(fetchVehicles,15000);
 })();
+
 
 
 
