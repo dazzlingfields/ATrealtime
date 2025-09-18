@@ -5,7 +5,7 @@ const proxyBaseUrl = "https://atrealtime.vercel.app";
 const realtimeUrl  = `${proxyBaseUrl}/api/realtime`;
 const routesUrl    = `${proxyBaseUrl}/api/routes`;
 const tripsUrl     = `${proxyBaseUrl}/api/trips`;
-const busTypesUrl  = "busTypes.json"; // JSON file hosted on GitHub Pages
+const busTypesUrl  = "https://raw.githubusercontent.com/dazzlingfields/ATrealtime/refs/heads/main/busTypes.json"; // JSON file hosted on GitHub Pages
 
 // --- Map setup ---
 const map = L.map("map").setView([-36.8485, 174.7633], 12);
@@ -298,3 +298,4 @@ async function fetchVehicles(){
   // Refresh on map move
   map.on("moveend", fetchVehicles);
 })();
+
