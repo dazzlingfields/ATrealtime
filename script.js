@@ -1,11 +1,11 @@
-// ================== v4.12 - Real-time Vehicle Tracking (Overlay Count + Refresh) ==================
+// ================== v4.11 - Realtime Vehicle Tracking with Vehicle Count + Refresh ==================
 
 // --- API endpoints ---
 const proxyBaseUrl = "https://atrealtime.vercel.app";
 const realtimeUrl = `${proxyBaseUrl}/api/realtime`;
 const routesUrl   = `${proxyBaseUrl}/api/routes`;
 const tripsUrl    = `${proxyBaseUrl}/api/trips`;
-const busTypesUrl = "https://raw.githubusercontent.com/dazzlingfields/ATrealtime/refs/heads/main/busTypes.json";
+const busTypesUrl = "busTypes.json";
 
 // --- Map setup ---
 const map = L.map("map").setView([-36.8485, 174.7633], 12);
@@ -16,22 +16,12 @@ const satellite = L.tileLayer("https://{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z
 L.control.layers({ "Light": light, "Dark": dark, "OSM": osm, "Satellite": satellite }).addTo(map);
 
 // --- Globals ---
+const debugBox = document.getElementById("debug");
+const vehicleCountBox = document.getElementById("vehicle-count");
 const routes = {};
 const trips = {};
 const vehicleMarkers = {};
 let busTypes = {};
-
-// --- Overlay control for vehicle count + last refresh ---
-const infoOverlay = L.control({position:'topright'});
-infoOverlay.onAdd = function() {
-    this._div = L.DomUtil.create('div','info-overlay');
-    this.update(0,'N/A');
-    return this._div;
-};
-infoOverlay.update = function(count, lastRefresh){
-    this._div.innerHTML = `<b>Vehicles:</b> ${count} <br><b>Last Refresh:</b> ${lastRefresh}`;
-};
-infoOverlay.addTo(map);
 
 // --- Layer groups ---
 const layerGroups = {
@@ -71,7 +61,7 @@ function addVehicleMarker(vehicleId, lat, lon, popupContent, color, typeKey){
     marker.setIcon(getVehicleIcon(color));
     if(marker.getPopup()) marker.getPopup().setContent(popupContent);
   } else {
-    const marker = L.marker([lat, lon], {icon:getVehicleIcon(color)}).bindPopup(popupContent).addTo(layerGroups[typeKey]);
+    const marker = L.marker([lat, lon], {icon:getVehicleIcon(color)}).addTo(layerGroups[typeKey]).bindPopup(popupContent);
     vehicleMarkers[vehicleId] = marker;
   }
 }
@@ -79,7 +69,7 @@ function addVehicleMarker(vehicleId, lat, lon, popupContent, color, typeKey){
 // --- Fetch all vehicles ---
 async function fetchVehicles(){
   const json=await safeFetch(realtimeUrl);
-  if(!json){ infoOverlay.update(0,'Unavailable'); return; }
+  if(!json){ debugBox.textContent="Realtime data unavailable"; return; }
 
   const vehicles=json?.response?.entity || json?.entity || [];
   const newVehicleIds=new Set();
@@ -104,11 +94,8 @@ async function fetchVehicles(){
     const routeId=v.vehicle?.trip?.route_id, tripId=v.vehicle?.trip?.trip_id;
     let busType="";
 
-    if(routeId && routes[routeId]){ 
-      const r=routes[routeId]; 
-      switch(r.route_type){ case 3:typeKey="bus";color=vehicleColors[3];break; case 2:typeKey="train";color=vehicleColors[2];break; case 4:typeKey="ferry";color=vehicleColors[4];break; } 
-      routeName=r.route_short_name||"N/A"; 
-    } else if(vehicleLabel.startsWith("AM")) typeKey="bus";
+    if(routeId && routes[routeId]){ const r=routes[routeId]; switch(r.route_type){ case 3:typeKey="bus";color=vehicleColors[3];break; case 2:typeKey="train";color=vehicleColors[2];break; case 4:typeKey="ferry";color=vehicleColors[4];break; } routeName=r.route_short_name||"N/A"; }
+    else if(vehicleLabel.startsWith("AM")) typeKey="bus";
 
     if(v.vehicle.trip?.trip_headsign) destination=v.vehicle.trip.trip_headsign;
     else if(tripId){
@@ -121,29 +108,17 @@ async function fetchVehicles(){
       });
     }
 
-    // --- Bus type lookup using JSON ---
     if(typeKey==="bus"){
       for(const model in busTypes){
-        const operators = busTypes[model];
-        if(operator && operators[operator]?.includes(vehicleNumber)){
-          busType = model;
-          break;
-        }
+        const ops=busTypes[model];
+        if(ops[operator]?.includes(vehicleNumber)){ busType=model; break; }
       }
     }
 
     const maxSpeed=typeKey==="bus"?100:typeKey==="train"?160:typeKey==="ferry"?80:180;
     const speed = speedKmh>=0 && speedKmh<=maxSpeed?speedKmh.toFixed(1)+" km/h":"N/A";
 
-    const popupContent=`
-      <b>Route:</b> ${routeName}<br>
-      <b>Destination:</b> ${destination}<br>
-      <b>Vehicle:</b> ${operator+vehicleLabel}<br>
-      ${busType?`<b>Bus Type:</b> ${busType}<br>`:""}
-      <b>Number Plate:</b> ${licensePlate}<br>
-      <b>Speed:</b> ${speed}<br>
-      <b>Occupancy:</b> ${occupancy}
-    `;
+    const popupContent=`<b>Route:</b> ${routeName}<br><b>Destination:</b> ${destination}<br><b>Vehicle:</b> ${operator+vehicleLabel}<br>${busType?`<b>Bus Type:</b> ${busType}<br>`:""}<b>Number Plate:</b> ${licensePlate}<br><b>Speed:</b> ${speed}<br><b>Occupancy:</b> ${occupancy}`;
 
     if(vehicleLabel.startsWith("AM")){
       if(typeKey==="train") inServiceAM.push({vehicleId, lat, lon, speedKmh, vehicleLabel});
@@ -153,17 +128,15 @@ async function fetchVehicles(){
     addVehicleMarker(vehicleId, lat, lon, popupContent, color, typeKey);
   }));
 
-  // Pair AM trains
   pairAMTrains(inServiceAM,outOfServiceAM).forEach(pair=>{
     const marker=vehicleMarkers[pair.inTrain.vehicleId];
     if(marker){ const oldContent=marker.getPopup()?.getContent()||""; marker.getPopup().setContent(oldContent+`<br><b>Paired to:</b> ${pair.outTrain.vehicleLabel}`); }
   });
 
-  // Remove old markers
   Object.keys(vehicleMarkers).forEach(id=>{ if(!newVehicleIds.has(id)){ map.removeLayer(vehicleMarkers[id]); delete vehicleMarkers[id]; } });
 
-  // --- Update overlay ---
-  infoOverlay.update(newVehicleIds.size, new Date().toLocaleTimeString());
+  debugBox.textContent = `Realtime update complete.`;
+  vehicleCountBox.textContent = `Vehicles: ${newVehicleIds.size} | Last refresh: ${new Date().toLocaleTimeString()}`;
 }
 
 // --- Init ---
@@ -173,4 +146,3 @@ async function fetchVehicles(){
   fetchVehicles();
   setInterval(fetchVehicles,15000);
 })();
-
