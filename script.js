@@ -75,7 +75,7 @@ function pairAMTrains(inService,outOfService){
             if(usedOut.has(outTrain.vehicleId)) return;
             const dist=distanceMeters(inTrain.lat,inTrain.lon,outTrain.lat,outTrain.lon);
             const speedDiff=Math.abs(inTrain.speedKmh-outTrain.speedKmh);
-            if(dist<=200 && speedDiff<=10 && dist<minDist){ minDist=dist; best=outTrain; }
+            if(dist<=200 && speedDiff<=15 && dist<minDist){ minDist=dist; best=outTrain; }
         });
         if(best){ pairs.push({inTrain,outTrain:best}); usedOut.add(best.vehicleId); }
     });
@@ -213,3 +213,4 @@ async function fetchVehicles(){
     setInterval(fetchVehicles, 15000);
     map.on('moveend', fetchVehicles);
 })();
+
