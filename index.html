@@ -6,11 +6,11 @@
   <title>AT Realtime Map</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
   <script defer src="https://static.vercel-insights.com/v1/script.js"></script>
-  <script>
-    window.vercelAnalytics = window.vercelAnalytics || {};
-    vercelAnalytics.track = vercelAnalytics.track || function(){ (vercelAnalytics.q=vercelAnalytics.q||[]).push(arguments) };
-    vercelAnalytics.track('pageview');
-  </script>
+<script>
+  window.vercelAnalytics = window.vercelAnalytics || {};
+  vercelAnalytics.track = vercelAnalytics.track || function(){ (vercelAnalytics.q=vercelAnalytics.q||[]).push(arguments) };
+  vercelAnalytics.track('pageview');
+</script>
   <style>
     body {
       font-family: Arial, sans-serif;
@@ -21,22 +21,25 @@
       height: 100vh;
       width: 100vw;
     }
+
     html, body {
-      margin: 0;
-      padding: 0;
-      width: 100%;
-      overflow-x: hidden;
-    }
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    overflow-x: hidden;  /* Prevent horizontal scroll */
+}
+
+
     #controls {
       position: absolute;
       top: 10px;
       left: 10px;
       z-index: 1000;
-      background: rgba(255, 255, 255, 0.9);
+      background: rgba(255, 255, 255, 0.8);
       padding: 15px;
       border-radius: 8px;
       box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-      max-width: 260px;
+      max-width: 250px;
     }
     .control-group {
       margin-bottom: 15px;
@@ -54,11 +57,11 @@
       color: #555;
       cursor: pointer;
     }
-    #debug, #vehicle-count {
+    #debug {
       font-family: monospace;
-      font-size: 0.85em;
-      color: #333;
-      margin-top: 8px;
+      font-size: 0.8em;
+      color: #777;
+      margin-top: 10px;
     }
     .vehicle-icon {
       text-align: center;
@@ -76,10 +79,16 @@
     <label><input type="checkbox" id="train-checkbox" checked> Trains</label>
     <label><input type="checkbox" id="ferry-checkbox" checked> Ferries</label>
     <label><input type="checkbox" id="other-checkbox" checked> Other</label>
-  </div>
 
-  <div id="debug">Realtime status...</div>
-  <div id="vehicle-count">Vehicles: 0 | Last refresh: N/A</div>
+  </div>
+    <div id="debug"></div>
+
+
+ 
+</div>
+
+<div id="map" style="width:100%;height:100vh;"></div>
+
 </div>
 
 <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
@@ -88,3 +97,13 @@
 
 </body>
 </html>
+
+
+
+
+
+
+
+
+
+
