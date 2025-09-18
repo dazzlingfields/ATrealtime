@@ -1,18 +1,18 @@
-// ================== v4.8.2 - Real-time Vehicle Tracking (Optimised Calls + Headsign Support) ==================
+// ================== v4.8.2 - Real-time Vehicle Tracking (Optimised + Headsign + Bus Type + Viewport Safe) ==================
 
 // --- API endpoints --- 
 const proxyBaseUrl = "https://atrealtime.vercel.app";
 const realtimeUrl = `${proxyBaseUrl}/api/realtime`;
 const routesUrl   = `${proxyBaseUrl}/api/routes`;
 const tripsUrl    = `${proxyBaseUrl}/api/trips`;
-const busTypesUrl = "busTypes.json"; // JSON file hosted on GitHub Pages
+const busTypesUrl = "https://raw.githubusercontent.com/dazzlingfields/ATrealtime/refs/heads/main/busTypes.json"; // JSON file hosted on GitHub Pages
 
 // --- Map setup ---
 const map = L.map("map").setView([-36.8485, 174.7633], 12);
 
 // Base maps
 const osm = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { attribution: "© OpenStreetMap contributors" });
-const light = L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", { subdomains: "abcd", attribution: "© OpenStreetMap contributors © CARTO" }).addTo(map); 
+const light = L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", { subdomains: "abcd", attribution: "© OpenStreetMap contributors © CARTO" }).addTo(map);
 const dark = L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", { subdomains: "abcd", attribution: "© OpenStreetMap contributors © CARTO" });
 const satellite = L.tileLayer("https://{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}", { subdomains: ["mt0","mt1","mt2","mt3"], attribution: "© Google" });
 
@@ -21,10 +21,10 @@ L.control.layers({ "Light": light, "Dark": dark, "OSM": osm, "Satellite": satell
 // --- Globals ---
 const debugBox = document.getElementById("debug");
 const routes = {};
-const trips = {};              // cache of trip info
-const tripCacheStatus = {};    // pending/done/failed
+const trips = {}; // trip cache
+const tripCacheStatus = {}; // pending/done/failed
 const vehicleMarkers = {};
-let busTypes = {};             // loaded from JSON
+let busTypes = {}; // loaded from JSON
 
 // --- Layer groups ---
 const layerGroups = {
@@ -47,20 +47,18 @@ const getVehicleIcon = color => L.divIcon({
   iconAnchor:[8,8]
 });
 
-// --- Safe fetch with retry ---
-async function safeFetch(url, retries=3, delay=2000){
+// --- Safe fetch ---
+async function safeFetch(url, retries=2, delay=2000){
   try {
     const res = await fetch(url);
     if(!res.ok) throw new Error(`Failed fetch: ${res.status}`);
     return await res.json();
-  } catch(err) {
+  } catch(err){
     if(retries > 0){
-      console.warn(`Fetch failed for ${url}. Retrying in ${delay}ms...`, err);
       await new Promise(r=>setTimeout(r, delay));
       return safeFetch(url, retries-1, delay*2);
     }
-    console.error(err);
-    return null;
+    return null; // silently fail
   }
 }
 
@@ -70,37 +68,40 @@ async function loadBusTypes(){
   if(data) busTypes = data;
 }
 
-async function loadAllRoutes() {
+async function loadAllRoutes(){
   const json = await safeFetch(routesUrl);
-  if (json?.data) {
+  if(json?.data){
     json.data.forEach(route => {
       routes[route.id || route.route_id] = route.attributes || route;
     });
-    console.log(`Successfully loaded ${Object.keys(routes).length} routes.`);
-  } else {
-    console.error("Could not load route data.");
+    console.log(`Loaded ${Object.keys(routes).length} routes.`);
   }
 }
 
-// --- Route/Trip caching ---
-function getRouteById(routeId){
-  return routes[routeId] || null;
-}
+// --- Route/trip caching ---
+function getRouteById(routeId){ return routes[routeId] || null; }
 
 async function fetchTripById(tripId){
   if(trips[tripId]) return trips[tripId];
-  if(tripCacheStatus[tripId] === "pending" || tripCacheStatus[tripId] === "failed") return null;
+  if(tripCacheStatus[tripId]) return null; // already pending/done/failed
 
   tripCacheStatus[tripId] = "pending";
-  const json = await safeFetch(`${tripsUrl}?id=${tripId}`);
-  const tripData = json?.data?.[0]?.attributes || json?.data?.attributes;
 
-  if(tripData){
-    trips[tripId] = tripData;
-    tripCacheStatus[tripId] = "done";
-    return tripData;
-  } else {
-    tripCacheStatus[tripId] = "failed"; // do not retry endlessly
+  try {
+    const json = await fetch(`${tripsUrl}?id=${tripId}`);
+    if(!json.ok) throw new Error(`Failed fetch: ${json.status}`);
+    const data = await json.json();
+    const tripData = data?.data?.[0]?.attributes || data?.data?.attributes;
+    if(tripData){
+      trips[tripId] = tripData;
+      tripCacheStatus[tripId] = "done";
+      return tripData;
+    } else {
+      tripCacheStatus[tripId] = "failed";
+      return null;
+    }
+  } catch(err){
+    tripCacheStatus[tripId] = "failed"; // prevent retry flood
     return null;
   }
 }
@@ -148,8 +149,7 @@ function addVehicleMarker(vehicleId, lat, lon, popupContent, color, typeKey, inB
     marker.setLatLng([lat, lon]);
     marker.setPopupContent(popupContent);
     marker.setIcon(getVehicleIcon(color));
-
-    if(inBounds) {
+    if(inBounds){
       if(!map.hasLayer(marker)) marker.addTo(layerGroups[typeKey]);
     } else {
       if(map.hasLayer(marker)) map.removeLayer(marker);
@@ -162,7 +162,7 @@ function addVehicleMarker(vehicleId, lat, lon, popupContent, color, typeKey, inB
   }
 }
 
-// --- Fetch vehicles (interval only, no viewport trigger) ---
+// --- Fetch vehicles ---
 async function fetchVehicles(){
   const json = await safeFetch(realtimeUrl);
   if(!json){
@@ -184,7 +184,6 @@ async function fetchVehicles(){
     const lat = v.vehicle.position.latitude;
     const lon = v.vehicle.position.longitude;
     const inBounds = bounds.contains([lat, lon]);
-
     newVehicleIds.add(vehicleId);
 
     const vehicleLabel = v.vehicle.vehicle?.label || "N/A";
@@ -219,17 +218,16 @@ async function fetchVehicles(){
     }
 
     // Determine headsign
-    if(v.vehicle.trip?.trip_headsign) {
+    if(v.vehicle.trip?.trip_headsign){
       destination = v.vehicle.trip.trip_headsign;
-    } else if(tripId) {
-      if(trips[tripId]) {
+    } else if(tripId){
+      if(trips[tripId]){
         destination = trips[tripId].trip_headsign || "N/A";
       } else {
         fetchTripById(tripId).then(tripData => {
-          if(tripData) {
-            trips[tripId] = tripData;
+          if(tripData){
             const marker = vehicleMarkers[vehicleId];
-            if(marker) {
+            if(marker){
               const oldContent = marker.getPopup().getContent();
               marker.setPopupContent(oldContent.replace(
                 /(<b>Destination:<\/b>\s*)(N\/A)/,
@@ -241,6 +239,7 @@ async function fetchVehicles(){
       }
     }
 
+    // Assign bus type if available
     if(typeKey==="bus"){
       for(const model in busTypes){
         const operators = busTypes[model];
@@ -294,33 +293,13 @@ async function fetchVehicles(){
 }
 
 // --- Init ---
-(function init(){
-  loadBusTypes();
-  loadAllRoutes();
+(async function init(){
+  await loadBusTypes();
+  await loadAllRoutes();
 
-  // Start vehicle loop
   fetchVehicles();
   setInterval(fetchVehicles, 15000);
 
-  // Only filter markers on viewport move (no API call)
-  map.on("moveend", () => {
-    const bounds = map.getBounds();
-    for (const [id, marker] of Object.entries(vehicleMarkers)) {
-      if (bounds.contains(marker.getLatLng())) {
-        if (!map.hasLayer(marker)) {
-          // detect correct type
-          let typeKey = "other";
-          for (const key in layerGroups) {
-            if (layerGroups[key].hasLayer(marker)) {
-              typeKey = key;
-              break;
-            }
-          }
-          marker.addTo(layerGroups[typeKey]);
-        }
-      } else {
-        if (map.hasLayer(marker)) map.removeLayer(marker);
-      }
-    }
-  });
+  // Refresh on map move
+  map.on("moveend", fetchVehicles);
 })();
