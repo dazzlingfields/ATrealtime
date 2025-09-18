@@ -1,4 +1,4 @@
-// Vehicle tracking v5.7 - viewport, essential caching, AM train pairing
+// Vehicle tracking v6.0 - viewport buffer, caching, AM train pairing
 
 const proxyBaseUrl = "https://atrealtime.vercel.app";
 const realtimeUrl = `${proxyBaseUrl}/api/realtime`;
@@ -6,28 +6,42 @@ const routesUrl = `${proxyBaseUrl}/api/routes`;
 const tripsUrl = `${proxyBaseUrl}/api/trips`;
 
 const map = L.map("map").setView([-36.8485, 174.7633], 12);
+
 const osm = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { attribution: "© OpenStreetMap contributors" });
 const light = L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", { subdomains:"abcd", attribution:"© OpenStreetMap contributors © CARTO" }).addTo(map);
 const dark = L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",{ subdomains:"abcd", attribution:"© OpenStreetMap contributors © CARTO" });
 const satellite = L.tileLayer("https://{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}", { subdomains:["mt0","mt1","mt2","mt3"], attribution:"© Google" });
+
 L.control.layers({"Light":light,"Dark":dark,"OSM":osm,"Satellite":satellite}).addTo(map);
 
 const debugBox = document.getElementById("debug");
 const routes = {};
 const trips = {};
 const vehicleMarkers = {};
-const vehicleData = {}; // cache type, route, headsign
+const vehicleData = {};
 
-const layerGroups = { bus:L.layerGroup().addTo(map), train:L.layerGroup().addTo(map), ferry:L.layerGroup().addTo(map), other:L.layerGroup().addTo(map) };
+const layerGroups = {
+    bus: L.layerGroup().addTo(map),
+    train: L.layerGroup().addTo(map),
+    ferry: L.layerGroup().addTo(map),
+    other: L.layerGroup().addTo(map)
+};
 
 function getVehicleIcon(type){
     const colors = { bus:"#007bff", train:"#dc3545", ferry:"#ffc107", other:"#6c757d" };
-    return L.divIcon({ className:'vehicle-icon', html:`<div style="background-color:${colors[type]||colors.other};width:12px;height:12px;border-radius:50%;border:2px solid white;"></div>`, iconSize:[16,16], iconAnchor:[8,8] });
+    return L.divIcon({
+        className:'vehicle-icon',
+        html:`<div style="background-color:${colors[type]||colors.other};width:12px;height:12px;border-radius:50%;border:2px solid white;"></div>`,
+        iconSize:[16,16], iconAnchor:[8,8]
+    });
 }
 
 async function safeFetch(url){
-    try{ const res = await fetch(url); if(!res.ok) throw new Error(`Failed fetch: ${res.status}`); return await res.json(); } 
-    catch(err){ console.error(err); return null; }
+    try{
+        const res = await fetch(url);
+        if(!res.ok) throw new Error(`Failed fetch: ${res.status}`);
+        return await res.json();
+    } catch(err){ console.error(err); return null; }
 }
 
 async function fetchRoutes(routeIds){
@@ -46,18 +60,6 @@ async function fetchTrips(tripIds){
     if(!json) return;
     const items = Array.isArray(json.data)?json.data:[json.data];
     items.forEach(item => { trips[item.id] = item.attributes || item; });
-}
-
-function addVehicleMarker(id, lat, lon, popup, type){
-    if(vehicleMarkers[id]){
-        vehicleMarkers[id].setLatLng([lat,lon]);
-        vehicleMarkers[id].setPopupContent(popup);
-        vehicleMarkers[id].setIcon(getVehicleIcon(type));
-    } else {
-        const marker = L.marker([lat,lon], {icon:getVehicleIcon(type)}).bindPopup(popup);
-        layerGroups[type].addLayer(marker);
-        vehicleMarkers[id] = marker;
-    }
 }
 
 function distanceMeters(lat1, lon1, lat2, lon2){
@@ -82,6 +84,28 @@ function pairAMTrains(inService, outOfService){
     return pairs;
 }
 
+function getViewportBuffer(ratio=0.2){
+    const bounds = map.getBounds();
+    const latDiff = bounds.getNorth() - bounds.getSouth();
+    const lngDiff = bounds.getEast() - bounds.getWest();
+    return L.latLngBounds(
+        [bounds.getSouth() - latDiff*ratio, bounds.getWest() - lngDiff*ratio],
+        [bounds.getNorth() + latDiff*ratio, bounds.getEast() + lngDiff*ratio]
+    );
+}
+
+function addVehicleMarker(id, lat, lon, popup, type){
+    if(vehicleMarkers[id]){
+        vehicleMarkers[id].setLatLng([lat,lon]);
+        vehicleMarkers[id].setPopupContent(popup);
+        vehicleMarkers[id].setIcon(getVehicleIcon(type));
+    } else {
+        const marker = L.marker([lat,lon], {icon:getVehicleIcon(type)}).bindPopup(popup);
+        layerGroups[type].addLayer(marker);
+        vehicleMarkers[id] = marker;
+    }
+}
+
 async function fetchVehicles(){
     const json = await safeFetch(realtimeUrl);
     if(!json){ debugBox.textContent="Error fetching vehicle data"; return; }
@@ -90,18 +114,17 @@ async function fetchVehicles(){
     const newIds = new Set();
     const routeIds = new Set();
     const tripIds = new Set();
-    const bounds = map.getBounds();
+    const bounds = getViewportBuffer(0.2);
 
     const inServiceAM = [], outOfServiceAM = [];
 
-    // collect IDs and AM trains in viewport
     vehicles.forEach(v=>{
         const vehicleId = v.vehicle?.vehicle?.id;
         if(!vehicleId || !v.vehicle?.position) return;
         const lat = v.vehicle.position.latitude, lon = v.vehicle.position.longitude;
         if(!bounds.contains([lat, lon])) return;
-        newIds.add(vehicleId);
 
+        newIds.add(vehicleId);
         const rId = v.vehicle?.trip?.route_id;
         const tId = v.vehicle?.trip?.trip_id;
         if(rId) routeIds.add(rId);
@@ -115,7 +138,6 @@ async function fetchVehicles(){
 
     await Promise.all([fetchRoutes(routeIds), fetchTrips(tripIds)]);
 
-    // render vehicles
     vehicles.forEach(v=>{
         const vehicleId = v.vehicle?.vehicle?.id;
         if(!vehicleId || !v.vehicle?.position) return;
@@ -134,11 +156,10 @@ async function fetchVehicles(){
         }
 
         vehicleData[vehicleId] = {type, route, headsign};
-        let popup = `<b>Type:</b> ${type}<br><b>Route:</b> ${route}<br><b>Destination:</b> ${headsign}`;
+        const popup = `<b>Type:</b> ${type}<br><b>Route:</b> ${route}<br><b>Destination:</b> ${headsign}`;
         addVehicleMarker(vehicleId, lat, lon, popup, type);
     });
 
-    // pair AM trains
     const pairs = pairAMTrains(inServiceAM, outOfServiceAM);
     pairs.forEach(pair=>{
         const marker = vehicleMarkers[pair.inTrain.vehicleId];
@@ -148,8 +169,13 @@ async function fetchVehicles(){
         }
     });
 
-    // remove markers outside viewport
-    Object.keys(vehicleMarkers).forEach(id=>{ if(!newIds.has(id)){ map.removeLayer(vehicleMarkers[id]); delete vehicleMarkers[id]; delete vehicleData[id]; } });
+    Object.keys(vehicleMarkers).forEach(id=>{
+        if(!newIds.has(id)){
+            map.removeLayer(vehicleMarkers[id]);
+            delete vehicleMarkers[id];
+            delete vehicleData[id];
+        }
+    });
 
     debugBox.textContent = `Last update: ${new Date().toLocaleTimeString()} | Vehicles: ${newIds.size}`;
 }
