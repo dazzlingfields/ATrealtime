@@ -108,11 +108,19 @@ async function fetchVehicles(){
       });
     }
 
-    if(typeKey==="bus"){
-      for(const model in busTypes){
-        const ops=busTypes[model];
-        if(ops[operator]?.includes(vehicleNumber)){ busType=model; break; }
-      }
+  if(typeKey==="bus"){
+    for(const model in busTypes){
+        const ops = busTypes[model];
+        for(const opCode in ops){
+            if(ops[opCode].includes(vehicleNumber)){
+                busType = model;
+                break;
+            }
+        }
+        if(busType) break;
+    }
+}
+
     }
 
     const maxSpeed=typeKey==="bus"?100:typeKey==="train"?160:typeKey==="ferry"?80:180;
@@ -146,4 +154,5 @@ async function fetchVehicles(){
   fetchVehicles();
   setInterval(fetchVehicles,15000);
 })();
+
 
