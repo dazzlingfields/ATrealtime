@@ -1,4 +1,4 @@
-// ================== v4.8 - Real-time Vehicle Tracking (Headsign Support + Optimised Calls) ==================
+// ================== v4.8.1 - Real-time Vehicle Tracking (Headsign Support + Viewport Fix) ==================
 
 // --- API endpoints --- 
 const proxyBaseUrl = "https://atrealtime.vercel.app";
@@ -134,20 +134,27 @@ function pairAMTrains(inService, outOfService){
 }
 
 // --- Add/update vehicle marker ---
-function addVehicleMarker(vehicleId, lat, lon, popupContent, color, typeKey){
+function addVehicleMarker(vehicleId, lat, lon, popupContent, color, typeKey, inBounds){
   if(vehicleMarkers[vehicleId]){
-    vehicleMarkers[vehicleId].setLatLng([lat, lon]);
-    vehicleMarkers[vehicleId].setPopupContent(popupContent);
-    vehicleMarkers[vehicleId].setIcon(getVehicleIcon(color));
+    const marker = vehicleMarkers[vehicleId];
+    marker.setLatLng([lat, lon]);
+    marker.setPopupContent(popupContent);
+    marker.setIcon(getVehicleIcon(color));
+
+    if(inBounds) {
+      if(!map.hasLayer(marker)) marker.addTo(layerGroups[typeKey]);
+    } else {
+      if(map.hasLayer(marker)) map.removeLayer(marker);
+    }
   } else {
     const marker = L.marker([lat, lon], {icon: getVehicleIcon(color)});
     marker.bindPopup(popupContent);
-    marker.addTo(layerGroups[typeKey]);
+    if(inBounds) marker.addTo(layerGroups[typeKey]);
     vehicleMarkers[vehicleId] = marker;
   }
 }
 
-// --- Fetch vehicles (viewport + buffer) ---
+// --- Fetch vehicles (always fetch all, filter in display) ---
 async function fetchVehicles(){
   const json = await safeFetch(realtimeUrl);
   if(!json){
@@ -160,13 +167,7 @@ async function fetchVehicles(){
   const inServiceAM = [];
   const outOfServiceAM = [];
 
-  // Get viewport bounds + buffer (~0.01 deg ~1km)
   const bounds = map.getBounds();
-  const buffer = 0.01;
-  const minLat = bounds.getSouth() - buffer;
-  const maxLat = bounds.getNorth() + buffer;
-  const minLng = bounds.getWest() - buffer;
-  const maxLng = bounds.getEast() + buffer;
 
   await Promise.all(vehicles.map(async v => {
     const vehicleId = v.vehicle?.vehicle?.id;
@@ -174,8 +175,7 @@ async function fetchVehicles(){
 
     const lat = v.vehicle.position.latitude;
     const lon = v.vehicle.position.longitude;
-
-    if(lat < minLat || lat > maxLat || lon < minLng || lon > maxLng) return;
+    const inBounds = bounds.contains([lat, lon]);
 
     newVehicleIds.add(vehicleId);
 
@@ -261,7 +261,7 @@ async function fetchVehicles(){
       else outOfServiceAM.push({vehicleId, lat, lon, speedKmh, vehicleLabel});
     }
 
-    addVehicleMarker(vehicleId, lat, lon, popupContent, color, typeKey);
+    addVehicleMarker(vehicleId, lat, lon, popupContent, color, typeKey, inBounds);
   }));
 
   // Pair AM trains
@@ -294,10 +294,6 @@ async function fetchVehicles(){
   fetchVehicles();
   setInterval(fetchVehicles, 15000);
 
-  // Debounced map move
-  let fetchTimeout;
-  map.on("moveend", () => {
-    clearTimeout(fetchTimeout);
-    fetchTimeout = setTimeout(fetchVehicles, 2000);
-  });
+  // Refresh on map move
+  map.on("moveend", fetchVehicles);
 })();
