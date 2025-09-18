@@ -1,26 +1,34 @@
-// ================== v4.6d - Real-time Vehicle Tracking ==================
+// ================== v4.6c - Real-time Vehicle Tracking ==================
 
 // --- API endpoints ---
 const proxyBaseUrl = "https://atrealtime.vercel.app";
 const realtimeUrl = `${proxyBaseUrl}/api/realtime`;
-const routesUrl = `${proxyBaseUrl}/api/routes`;
-const tripsUrl = `${proxyBaseUrl}/api/trips`;
+const routesUrl = "https://api.at.govt.nz/gtfs/v3/routes/";
 const busTypesUrl = "https://raw.githubusercontent.com/dazzlingfields/ATrealtime/refs/heads/main/busTypes.json";
 
 // --- Map setup ---
 const map = L.map("map").setView([-36.8485, 174.7633], 12);
 
-// Base maps
-const osm = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { attribution: "© OpenStreetMap contributors" });
-const light = L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", { subdomains: "abcd", attribution: "© OpenStreetMap contributors © CARTO" }).addTo(map);
-const dark = L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", { subdomains: "abcd", attribution: "© OpenStreetMap contributors © CARTO" });
-const satellite = L.tileLayer("https://{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}", { subdomains: ["mt0","mt1","mt2","mt3"], attribution: "© Google" });
+const osm = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    attribution: "© OpenStreetMap contributors"
+});
+const light = L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", {
+    subdomains: "abcd",
+    attribution: "© OpenStreetMap contributors © CARTO"
+}).addTo(map);
+const dark = L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+    subdomains: "abcd",
+    attribution: "© OpenStreetMap contributors © CARTO"
+});
+const satellite = L.tileLayer("https://{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}", {
+    subdomains: ["mt0","mt1","mt2","mt3"],
+    attribution: "© Google"
+});
 L.control.layers({ "Light": light, "Dark": dark, "OSM": osm, "Satellite": satellite }).addTo(map);
 
 // --- Globals ---
 const debugBox = document.getElementById("debug");
-const routes = {};
-const trips = {};
+const routesCache = {};
 const vehicleMarkers = {};
 let busTypes = {}; // loaded from JSON
 
@@ -73,12 +81,15 @@ async function loadBusTypes(){
     if(data) busTypes = data;
 }
 
-// --- Route caching ---
+// --- Fetch route by ID (includes trips) ---
 async function fetchRouteById(routeId){
-    if(routes[routeId]) return routes[routeId];
-    const json = await safeFetch(`${routesUrl}?id=${routeId}`);
-    const routeData = json?.data?.[0]?.attributes || json?.data?.attributes;
-    if(routeData){ routes[routeId]=routeData; return routeData; }
+    if(routesCache[routeId]) return routesCache[routeId];
+    const json = await safeFetch(`${routesUrl}${routeId}`);
+    if(json?.data){
+        const routeData = json.data;
+        routesCache[routeId] = routeData;
+        return routeData;
+    }
     return null;
 }
 
@@ -136,34 +147,38 @@ async function fetchVehicles() {
         const lat = v.vehicle.position.latitude;
         const lon = v.vehicle.position.longitude;
         const vehicleLabel = v.vehicle.vehicle?.label || "N/A";
-        const operator = v.vehicle.vehicle?.operator_id || "";
-        const licensePlate = v.vehicle.vehicle?.license_plate || "N/A";
         const occupancyStatus = v.vehicle.occupancy_status;
         const speedKmh = v.vehicle.position.speed ? v.vehicle.position.speed*3.6 : 0;
 
-        let typeKey="other", color=vehicleColors.default, routeName="N/A";
-        let destination=v.vehicle.trip?.trip_headsign || "N/A";
+        let typeKey="other", color=vehicleColors.default, routeName="N/A", destination="N/A";
         const occupancy = occupancyStatus!==undefined ? occupancyLabels[occupancyStatus]||"Unknown" : "N/A";
 
-        // --- Determine type from route ---
+        // --- Determine type and destination from route ---
         const routeId = v.vehicle?.trip?.route_id;
-        if(routeId){
-            const routeInfo = await fetchRouteById(routeId);
-            if(routeInfo){
-                switch(routeInfo.route_type){
+        if (routeId){
+            const routeData = await fetchRouteById(routeId);
+            if(routeData){
+                switch(routeData.route_type){
                     case 3: typeKey="bus"; color=vehicleColors[3]; break;
                     case 2: typeKey="train"; color=vehicleColors[2]; break;
                     case 4: typeKey="ferry"; color=vehicleColors[4]; break;
                 }
-                routeName = routeInfo.route_short_name || "N/A";
+                routeName = routeData.route_short_name || "N/A";
+
+                // Trip headsign
+                const vehicleTripId = v.vehicle.trip?.trip_id;
+                if(vehicleTripId && routeData.trips){
+                    const trip = routeData.trips.find(t => t.id === vehicleTripId);
+                    if(trip) destination = trip.trip_headsign || "N/A";
+                }
             }
         }
 
         // --- Bus type from JSON ---
         let busType="";
         if(typeKey==="bus"){
-            const operatorCode = operator || (vehicleLabel.match(/^[A-Z]+/)||[""])[0];
-            const vehicleNumber = Number(vehicleLabel.replace(/\D/g,""));
+            const operatorCode = (vehicleLabel.match(/^[A-Z]+/)||[""])[0];
+            const vehicleNumber = Number(vehicleLabel.replace(operatorCode,""));
             for(const model in busTypes){
                 const operators = busTypes[model];
                 if(operators[operatorCode] && operators[operatorCode].includes(vehicleNumber)){
@@ -182,19 +197,15 @@ async function fetchVehicles() {
         const popupContent = `
             <b>Route:</b> ${routeName}<br>
             <b>Destination:</b> ${destination}<br>
-            <b>Vehicle Label:</b> ${vehicleLabel}<br>
-            <b>Operator Code:</b> ${operator || (vehicleLabel.match(/^[A-Z]+/)||[""])[0]}<br>
+            <b>Vehicle:</b> ${vehicleLabel}<br>
             ${busType?`<b>Bus Type:</b> ${busType}<br>`:""}
-            <b>Number Plate:</b> ${licensePlate}<br>
             <b>Speed:</b> ${speed}<br>
             <b>Occupancy:</b> ${occupancy}
         `;
 
         // --- Track AM trains ---
-        if(vehicleLabel.startsWith("AM")){
-            if(typeKey==="train") inServiceAMTrains.push({vehicleId,lat,lon,speedKmh,vehicleLabel});
-            else outOfServiceAMTrains.push({vehicleId,lat,lon,speedKmh,vehicleLabel});
-        }
+        if(vehicleLabel.startsWith("AM") && typeKey==="train") inServiceAMTrains.push({vehicleId,lat,lon,speedKmh,vehicleLabel});
+        else if(vehicleLabel.startsWith("AM")) outOfServiceAMTrains.push({vehicleId,lat,lon,speedKmh,vehicleLabel});
 
         // --- Add/update marker ---
         if(vehicleMarkers[vehicleId]){
