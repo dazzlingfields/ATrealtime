@@ -207,15 +207,16 @@ async function fetchVehicles(){
     const maxSpeed = typeKey==="bus"?100:typeKey==="train"?160:typeKey==="ferry"?80:180; 
     if(speedKmh>=0 && speedKmh<=maxSpeed) speed = speedKmh.toFixed(1)+" km/h";
 
-    const popupContent = `
-      <b>Route:</b> ${routeName}<br>
-      <b>Destination:</b> ${destination}<br>
-      <b>Vehicle:</b> ${vehicleLabelWithOperator}<br>
-      <b>Bus Type:</b> ${busType}<br>
-      <b>Number Plate:</b> ${licensePlate}<br>
-      <b>Speed:</b> ${speed}<br>
-      <b>Occupancy:</b> ${occupancy}
-    `;
+  const popupContent = `
+    <b>Route:</b> ${routeName}<br>
+    <b>Destination:</b> ${destination}<br>
+    <b>Vehicle:</b> ${vehicleLabelWithOperator}<br>
+    ${busType ? `<b>Bus Type:</b> ${busType}<br>` : ""}
+    <b>Number Plate:</b> ${licensePlate}<br>
+    <b>Speed:</b> ${speed}<br>
+    <b>Occupancy:</b> ${occupancy}
+`;
+
 
     // Track AM trains
     if(vehicleLabel.startsWith("AM")){
@@ -263,4 +264,5 @@ async function fetchVehicles(){
   fetchVehicles();
   setInterval(fetchVehicles, 15000);
 })();
+
 
