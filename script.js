@@ -17,7 +17,7 @@ L.control.layers({ "Light": light, "Dark": dark, "OSM": osm, "Satellite": satell
 
 // --- Globals ---
 const debugBox = document.getElementById("debug");
-const refreshIndicator = document.getElementById("last-refresh"); // Separate last refresh indicator
+const refreshIndicator = document.getElementById("last-refresh");
 const routes = {};
 const trips = {};
 const vehicleMarkers = {};
@@ -45,21 +45,42 @@ async function loadAllRoutes(){ const json = await safeFetch(routesUrl); if(json
 
 // --- Route/Trip helpers ---
 function getRouteById(routeId){ return routes[routeId]||null; }
-async function fetchTripById(tripId){ if(trips[tripId]) return trips[tripId]; const json = await safeFetch(`${tripsUrl}?id=${tripId}`); const tripData = json?.data?.[0]?.attributes || json?.data?.attributes; if(tripData){ trips[tripId]=tripData; return tripData; } return null; }
+async function fetchTripById(tripId){ 
+  if(trips[tripId]) return trips[tripId]; 
+  try {
+    const json = await safeFetch(`${tripsUrl}?id=${tripId}`); 
+    const tripData = json?.data?.[0]?.attributes || json?.data?.attributes; 
+    if(tripData){ trips[tripId]=tripData; return tripData; } 
+  } catch {} 
+  return null; 
+}
 
 // --- Distance helper ---
 function distanceMeters(lat1, lon1, lat2, lon2){ const R=6371000; const toRad=deg=>deg*Math.PI/180; const dLat=toRad(lat2-lat1), dLon=toRad(lon2-lon1); const a=Math.sin(dLat/2)**2 + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)**2; return 2*R*Math.atan2(Math.sqrt(a),Math.sqrt(1-a)); }
 
 // --- Pair AM trains ---
-function pairAMTrains(inService,outOfService){ const pairs=[], usedOut=new Set(); inService.forEach(inTrain=>{ let bestMatch=null,minDist=200; outOfService.forEach(outTrain=>{ if(usedOut.has(outTrain.vehicleId)) return; const dist=distanceMeters(inTrain.lat,inTrain.lon,outTrain.lat,outTrain.lon); const speedDiff=Math.abs(inTrain.speedKmh-outTrain.speedKmh); if(dist<=200 && speedDiff<=10 && dist<minDist){ minDist=dist; bestMatch=outTrain; } }); if(bestMatch){ pairs.push({inTrain,outTrain:bestMatch}); usedOut.add(bestMatch.vehicleId); } }); return pairs; }
+function pairAMTrains(inService,outOfService){ 
+  const pairs=[], usedOut=new Set(); 
+  inService.forEach(inTrain=>{ 
+    let bestMatch=null,minDist=200; 
+    outOfService.forEach(outTrain=>{ 
+      if(usedOut.has(outTrain.vehicleId)) return; 
+      const dist=distanceMeters(inTrain.lat,inTrain.lon,outTrain.lat,outTrain.lon); 
+      const speedDiff=Math.abs(inTrain.speedKmh-outTrain.speedKmh); 
+      if(dist<=200 && speedDiff<=10 && dist<minDist){ minDist=dist; bestMatch=outTrain; } 
+    }); 
+    if(bestMatch){ pairs.push({inTrain,outTrain:bestMatch}); usedOut.add(bestMatch.vehicleId); } 
+  }); 
+  return pairs; 
+}
 
 // --- Add/update vehicle marker ---
 function addVehicleMarker(vehicleId, lat, lon, popupContent, color, typeKey){
   if(vehicleMarkers[vehicleId]){
     const marker = vehicleMarkers[vehicleId];
-    marker.setLatLng([lat, lon]); // Always update position
+    marker.setLatLng([lat, lon]);
     marker.setIcon(getVehicleIcon(color));
-    if(marker.getPopup()) marker.getPopup().setContent(popupContent); // Update popup safely
+    if(marker.getPopup()) marker.getPopup().setContent(popupContent);
   } else {
     const marker = L.marker([lat, lon], {icon:getVehicleIcon(color)}).bindPopup(popupContent).addTo(layerGroups[typeKey]);
     vehicleMarkers[vehicleId] = marker;
@@ -118,15 +139,7 @@ async function fetchVehicles(){
     const maxSpeed=typeKey==="bus"?100:typeKey==="train"?160:typeKey==="ferry"?80:180;
     const speed = speedKmh>=0 && speedKmh<=maxSpeed?speedKmh.toFixed(1)+" km/h":"N/A";
 
-    const popupContent=`
-      <b>Route:</b> ${routeName}<br>
-      <b>Destination:</b> ${destination}<br>
-      <b>Vehicle:</b> ${operator+vehicleLabel}<br>
-      ${busType?`<b>Bus Type:</b> ${busType}<br>`:""}
-      <b>Number Plate:</b> ${licensePlate}<br>
-      <b>Speed:</b> ${speed}<br>
-      <b>Occupancy:</b> ${occupancy}
-    `;
+    const popupContent=`<b>Route:</b> ${routeName}<br><b>Destination:</b> ${destination}<br><b>Vehicle:</b> ${operator+vehicleLabel}<br>${busType?`<b>Bus Type:</b> ${busType}<br>`:""}<b>Number Plate:</b> ${licensePlate}<br><b>Speed:</b> ${speed}<br><b>Occupancy:</b> ${occupancy}`;
 
     if(vehicleLabel.startsWith("AM")){
       if(typeKey==="train") inServiceAM.push({vehicleId, lat, lon, speedKmh, vehicleLabel});
@@ -136,17 +149,15 @@ async function fetchVehicles(){
     addVehicleMarker(vehicleId, lat, lon, popupContent, color, typeKey);
   }));
 
-  // Pair AM trains
   pairAMTrains(inServiceAM,outOfServiceAM).forEach(pair=>{
     const marker=vehicleMarkers[pair.inTrain.vehicleId];
     if(marker){ const oldContent=marker.getPopup()?.getContent()||""; marker.getPopup().setContent(oldContent+`<br><b>Paired to:</b> ${pair.outTrain.vehicleLabel}`); }
   });
 
-  // Remove old markers
   Object.keys(vehicleMarkers).forEach(id=>{ if(!newVehicleIds.has(id)){ map.removeLayer(vehicleMarkers[id]); delete vehicleMarkers[id]; } });
 
   debugBox.textContent=`Vehicles: ${newVehicleIds.size}`;
-  if(refreshIndicator) refreshIndicator.textContent = `Last refresh: ${new Date().toLocaleTimeString()}`;
+  if(refreshIndicator) refreshIndicator.textContent=`Last refresh: ${new Date().toLocaleTimeString()}`;
 }
 
 // --- Init ---
