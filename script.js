@@ -201,7 +201,7 @@ async function fetchVehicles() {
             <b>Route:</b> ${routeName}<br>
             <b>Destination:</b> ${destination}<br>
             <b>Vehicle:</b> ${operator+vehicleLabel}<br>
-             Operator (API raw): ${operator || "N/A"}<br>
+            <b>Operator (API raw)</b>: ${operator}<br>
             ${busType?`<b>Bus Type:</b> ${busType}<br>`:""}
             <b>Number Plate:</b> ${licensePlate}<br>
             <b>Speed:</b> ${speed}<br>
@@ -252,4 +252,5 @@ async function fetchVehicles() {
     fetchVehicles();
     setInterval(fetchVehicles,15000);
 })();
+
 
