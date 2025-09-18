@@ -1,4 +1,4 @@
-// ================== v4.6c - Real-time Vehicle Tracking ==================
+// ================== v4.6d - Real-time Vehicle Tracking ==================
 
 // --- API endpoints ---
 const proxyBaseUrl = "https://atrealtime.vercel.app";
@@ -11,21 +11,10 @@ const busTypesUrl = "https://raw.githubusercontent.com/dazzlingfields/ATrealtime
 const map = L.map("map").setView([-36.8485, 174.7633], 12);
 
 // Base maps
-const osm = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-    attribution: "© OpenStreetMap contributors"
-});
-const light = L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", {
-    subdomains: "abcd",
-    attribution: "© OpenStreetMap contributors © CARTO"
-}).addTo(map);
-const dark = L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
-    subdomains: "abcd",
-    attribution: "© OpenStreetMap contributors © CARTO"
-});
-const satellite = L.tileLayer("https://{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}", {
-    subdomains: ["mt0","mt1","mt2","mt3"],
-    attribution: "© Google"
-});
+const osm = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { attribution: "© OpenStreetMap contributors" });
+const light = L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", { subdomains: "abcd", attribution: "© OpenStreetMap contributors © CARTO" }).addTo(map);
+const dark = L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", { subdomains: "abcd", attribution: "© OpenStreetMap contributors © CARTO" });
+const satellite = L.tileLayer("https://{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}", { subdomains: ["mt0","mt1","mt2","mt3"], attribution: "© Google" });
 L.control.layers({ "Light": light, "Dark": dark, "OSM": osm, "Satellite": satellite }).addTo(map);
 
 // --- Globals ---
@@ -84,19 +73,12 @@ async function loadBusTypes(){
     if(data) busTypes = data;
 }
 
-// --- Route/Trip caching ---
+// --- Route caching ---
 async function fetchRouteById(routeId){
     if(routes[routeId]) return routes[routeId];
     const json = await safeFetch(`${routesUrl}?id=${routeId}`);
     const routeData = json?.data?.[0]?.attributes || json?.data?.attributes;
     if(routeData){ routes[routeId]=routeData; return routeData; }
-    return null;
-}
-async function fetchTripById(tripId){
-    if(trips[tripId]) return trips[tripId];
-    const json = await safeFetch(`${tripsUrl}?id=${tripId}`);
-    const tripData = json?.data?.[0]?.attributes || json?.data?.attributes;
-    if(tripData){ trips[tripId]=tripData; return tripData; }
     return null;
 }
 
@@ -136,7 +118,7 @@ function pairAMTrains(inService, outOfService){
     return pairs;
 }
 
-// --- Fetch vehicles (optimized) ---
+// --- Fetch vehicles ---
 async function fetchVehicles() {
     const json = await safeFetch(realtimeUrl);
     if(!json) { debugBox.textContent = "Error fetching vehicle data"; return; }
@@ -181,7 +163,7 @@ async function fetchVehicles() {
         let busType="";
         if(typeKey==="bus"){
             const operatorCode = operator || (vehicleLabel.match(/^[A-Z]+/)||[""])[0];
-            const vehicleNumber = Number(vehicleLabel.replace(operatorCode,""));
+            const vehicleNumber = Number(vehicleLabel.replace(/\D/g,""));
             for(const model in busTypes){
                 const operators = busTypes[model];
                 if(operators[operatorCode] && operators[operatorCode].includes(vehicleNumber)){
@@ -200,8 +182,8 @@ async function fetchVehicles() {
         const popupContent = `
             <b>Route:</b> ${routeName}<br>
             <b>Destination:</b> ${destination}<br>
-            <b>Vehicle:</b> ${operator+vehicleLabel}<br>
-            <b>Operator (API raw)</b>: ${operator}<br>
+            <b>Vehicle Label:</b> ${vehicleLabel}<br>
+            <b>Operator Code:</b> ${operator || (vehicleLabel.match(/^[A-Z]+/)||[""])[0]}<br>
             ${busType?`<b>Bus Type:</b> ${busType}<br>`:""}
             <b>Number Plate:</b> ${licensePlate}<br>
             <b>Speed:</b> ${speed}<br>
@@ -252,5 +234,3 @@ async function fetchVehicles() {
     fetchVehicles();
     setInterval(fetchVehicles,15000);
 })();
-
-
