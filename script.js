@@ -1,4 +1,4 @@
-// ================== v4.9 - Real-time Vehicle Tracking (AM Trains + Fast) ==================
+// ================== v5.2 - Real-time Vehicle Tracking (Optimized Full Info) ==================
 
 // --- API endpoints ---
 const proxyBaseUrl = "https://atrealtime.vercel.app";
@@ -9,16 +9,18 @@ const busTypesUrl = "https://raw.githubusercontent.com/dazzlingfields/ATrealtime
 
 // --- Map setup ---
 const map = L.map("map").setView([-36.8485, 174.7633], 12);
-const light = L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", { subdomains:"abcd", attribution:"© OpenStreetMap contributors © CARTO" }).addTo(map);
+const light = L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",{ subdomains:"abcd", attribution:"© OpenStreetMap contributors © CARTO" }).addTo(map);
 const dark = L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",{ subdomains:"abcd", attribution:"© OpenStreetMap contributors © CARTO" });
 L.control.layers({"Light":light,"Dark":dark}).addTo(map);
 
 // --- Globals ---
 const debugBox = document.getElementById("debug");
+const toggleOptimized = document.getElementById("optimized-toggle");
 const routes = {};
 const trips = {};
 const vehicleMarkers = {};
 let busTypes = {};
+let optimizedMode = true;
 
 // --- Layer groups ---
 const layerGroups = { bus:L.layerGroup().addTo(map), train:L.layerGroup().addTo(map), ferry:L.layerGroup().addTo(map), other:L.layerGroup().addTo(map) };
@@ -26,25 +28,13 @@ const layerGroups = { bus:L.layerGroup().addTo(map), train:L.layerGroup().addTo(
 // --- Vehicle styles ---
 const vehicleColors = { 3:"#007bff", 2:"#dc3545", 4:"#ffc107", default:"#6c757d" };
 const occupancyLabels = { 0:"Empty",1:"Many Seats Available",2:"Few Seats Available",3:"Standing Room Only",4:"Crushed Standing Room Only",5:"Full",6:"Not Accepting Passengers" };
-
-function getVehicleIcon(color){
-    return L.divIcon({ className:'vehicle-icon', html:`<div style="background-color:${color};width:12px;height:12px;border-radius:50%;border:2px solid white;"></div>`, iconSize:[16,16], iconAnchor:[8,8] });
-}
+function getVehicleIcon(color){ return L.divIcon({ className:'vehicle-icon', html:`<div style="background-color:${color};width:12px;height:12px;border-radius:50%;border:2px solid white;"></div>`, iconSize:[16,16], iconAnchor:[8,8] }); }
 
 // --- Safe fetch ---
-async function safeFetch(url){
-    try{
-        const res = await fetch(url);
-        if(!res.ok) throw new Error(`Failed fetch: ${res.status}`);
-        return await res.json();
-    } catch(err){ console.error(err); return null; }
-}
+async function safeFetch(url){ try{ const res = await fetch(url); if(!res.ok) throw new Error(`Failed fetch: ${res.status}`); return await res.json(); } catch(err){ console.error(err); return null; } }
 
-// --- Load bus types JSON ---
-async function loadBusTypes(){ 
-    const data = await safeFetch(busTypesUrl); 
-    if(data) busTypes = data; 
-}
+// --- Load bus types ---
+async function loadBusTypes(){ const data = await safeFetch(busTypesUrl); if(data) busTypes = data; }
 
 // --- Route/Trip caching ---
 async function fetchRouteById(routeId){ 
@@ -54,7 +44,6 @@ async function fetchRouteById(routeId){
     if(routeData){ routes[routeId]=routeData; return routeData; } 
     return null; 
 }
-
 async function fetchTripById(tripId){ 
     if(trips[tripId]) return trips[tripId]; 
     const json = await safeFetch(`${tripsUrl}?id=${tripId}`); 
@@ -63,24 +52,35 @@ async function fetchTripById(tripId){
     return null; 
 }
 
+// --- Bulk fetch trips (optimized mode) ---
+async function fetchTripsBulk(tripIds){
+    const missingIds = tripIds.filter(id => !trips[id]);
+    if(missingIds.length === 0) return;
+    const json = await safeFetch(`${tripsUrl}?id=${missingIds.join(",")}`);
+    const data = json?.data || [];
+    data.forEach(d => {
+        const tripId = d.id || d.attributes?.trip_id;
+        if(tripId && d.attributes) trips[tripId] = d.attributes;
+    });
+}
+
 // --- Distance helper ---
 function distanceMeters(lat1, lon1, lat2, lon2){
-    const R = 6371000, toRad = deg=>deg*Math.PI/180;
-    const dLat = toRad(lat2-lat1), dLon = toRad(lon2-lon1);
+    const R=6371000, toRad=deg=>deg*Math.PI/180;
+    const dLat=toRad(lat2-lat1), dLon=toRad(lon2-lon1);
     const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)**2;
     return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
 }
 
 // --- Pair AM trains ---
 function pairAMTrains(inService, outOfService){
-    const pairs = [], usedOut = new Set();
+    const pairs=[], usedOut=new Set();
     inService.forEach(inTrain=>{
         let best=null, minDist=200;
         outOfService.forEach(outTrain=>{
             if(usedOut.has(outTrain.vehicleId)) return;
             const dist = distanceMeters(inTrain.lat,inTrain.lon,outTrain.lat,outTrain.lon);
-            const speedDiff = Math.abs(inTrain.speedKmh - outTrain.speedKmh);
-            if(dist<=200 && speedDiff<=10 && dist<minDist){ minDist=dist; best=outTrain; }
+            if(dist<=200 && dist<minDist){ minDist=dist; best=outTrain; }
         });
         if(best){ pairs.push({inTrain,outTrain:best}); usedOut.add(best.vehicleId); }
     });
@@ -104,21 +104,21 @@ function addVehicleMarker(vehicleId, lat, lon, popupContent, icon, layerGroup){
 // --- Fetch vehicles ---
 async function fetchVehicles(){
     const json = await safeFetch(realtimeUrl);
-    if(!json) { debugBox.textContent="Error fetching vehicle data"; return; }
+    if(!json){ debugBox.textContent="Error fetching vehicle data"; return; }
 
     const vehicles = json?.response?.entity || json?.entity || [];
     const newVehicleIds = new Set();
     const inServiceAMTrains = [], outOfServiceAMTrains = [];
 
-    // --- Preload all routes and trips in parallel ---
-    const routeIds = [...new Set(vehicles.map(v=>v.vehicle?.trip?.route_id).filter(Boolean))];
-    const tripIds = [...new Set(vehicles.map(v=>v.vehicle?.trip?.trip_id).filter(Boolean))];
-    await Promise.all(routeIds.map(id=>fetchRouteById(id)));
-    await Promise.all(tripIds.map(id=>fetchTripById(id)));
+    // --- Optimized bulk trip fetch ---
+    if(optimizedMode){
+        const tripIds = [...new Set(vehicles.map(v=>v.vehicle?.trip?.trip_id).filter(Boolean))];
+        await fetchTripsBulk(tripIds);
+    }
 
-    vehicles.forEach(v=>{
+    for(const v of vehicles){
         const vehicleId = v.vehicle?.vehicle?.id;
-        if(!v.vehicle || !v.vehicle.position || !vehicleId) return;
+        if(!v.vehicle || !v.vehicle.position || !vehicleId) continue;
         newVehicleIds.add(vehicleId);
 
         const lat=v.vehicle.position.latitude, lon=v.vehicle.position.longitude;
@@ -130,22 +130,18 @@ async function fetchVehicles(){
 
         let typeKey="other", color=vehicleColors.default, routeName="N/A", destination="N/A";
 
-        // --- Bus type JSON override ---
+        // --- Bus type override ---
         const operatorCode = operator || (vehicleLabel.match(/^[A-Z]+/)||[""])[0];
         const vehicleNumber = Number(vehicleLabel.replace(operatorCode,""));
         for(const model in busTypes){
             const operators = busTypes[model];
-            if(operators[operatorCode]?.includes(vehicleNumber)){ 
-                typeKey="bus"; 
-                color = vehicleColors[3]; 
-                break; 
-            }
+            if(operators[operatorCode]?.includes(vehicleNumber)){ typeKey="bus"; color = vehicleColors[3]; break; }
         }
 
         // --- Route info ---
-        const routeId=v.vehicle?.trip?.route_id, tripId=v.vehicle?.trip?.trip_id;
+        const routeId = v.vehicle?.trip?.route_id, tripId = v.vehicle?.trip?.trip_id;
         if(routeId && typeKey==="other"){ 
-            const routeInfo = routes[routeId]; 
+            const routeInfo = routes[routeId] || await fetchRouteById(routeId); 
             if(routeInfo){ 
                 switch(routeInfo.route_type){case 3:typeKey="bus";color=vehicleColors[3];break;case 2:typeKey="train";color=vehicleColors[2];break;case 4:typeKey="ferry";color=vehicleColors[4];break;} 
                 routeName = routeInfo.route_short_name||"N/A"; 
@@ -154,16 +150,17 @@ async function fetchVehicles(){
 
         // --- Trip info ---
         if(tripId){ 
-            const tripInfo = trips[tripId]; 
+            let tripInfo = trips[tripId];
+            if(!tripInfo && !optimizedMode) tripInfo = await fetchTripById(tripId);
             if(tripInfo) destination = tripInfo.trip_headsign||"N/A"; 
         }
 
-        // --- Speed clamp ---
+        // --- Speed ---
         const maxSpeed = typeKey==="bus"?100:typeKey==="train"?160:typeKey==="ferry"?80:180;
         const speed = speedKmh>=0 && speedKmh<=maxSpeed ? speedKmh.toFixed(1)+" km/h" : "N/A";
 
         // --- Popup ---
-        const popupContent=`
+        const popupContent = `
             <b>Route:</b> ${routeName}<br>
             <b>Destination:</b> ${destination}<br>
             <b>Vehicle:</b> ${vehicleLabel}<br>
@@ -177,7 +174,7 @@ async function fetchVehicles(){
         else if(vehicleLabel.startsWith("AM")) outOfServiceAMTrains.push({vehicleId,lat,lon,speedKmh,vehicleLabel});
 
         addVehicleMarker(vehicleId, lat, lon, popupContent, getVehicleIcon(color), layerGroups[typeKey]);
-    });
+    }
 
     // --- Pair AM trains ---
     const pairs = pairAMTrains(inServiceAMTrains,outOfServiceAMTrains);
@@ -189,7 +186,7 @@ async function fetchVehicles(){
         }
     });
 
-    // Remove old markers
+    // --- Remove old markers ---
     Object.keys(vehicleMarkers).forEach(id=>{
         if(!newVehicleIds.has(id)){
             map.removeLayer(vehicleMarkers[id]);
@@ -197,7 +194,15 @@ async function fetchVehicles(){
         }
     });
 
-    debugBox.textContent=`Last update: ${new Date().toLocaleTimeString()} | Vehicles: ${vehicles.length}`;
+    debugBox.textContent=`Last update: ${new Date().toLocaleTimeString()} | Vehicles: ${vehicles.length} | Optimized: ${optimizedMode}`;
+}
+
+// --- Toggle listener ---
+if(toggleOptimized){
+    toggleOptimized.addEventListener("change", e=>{
+        optimizedMode = e.target.checked;
+        fetchVehicles();
+    });
 }
 
 // --- Init ---
