@@ -121,7 +121,7 @@ async function fetchVehicles(){
     }
 }
 
-    }
+    
 
     const maxSpeed=typeKey==="bus"?100:typeKey==="train"?160:typeKey==="ferry"?80:180;
     const speed = speedKmh>=0 && speedKmh<=maxSpeed?speedKmh.toFixed(1)+" km/h":"N/A";
@@ -154,5 +154,6 @@ async function fetchVehicles(){
   fetchVehicles();
   setInterval(fetchVehicles,15000);
 })();
+
 
 
