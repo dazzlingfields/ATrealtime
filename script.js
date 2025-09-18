@@ -1,6 +1,6 @@
-// ================== v4.6b - Real-time Vehicle Tracking (AM Pairing + Bus Types JSON) ==================
+// ================== v4.6b - Real-time Vehicle Tracking ==================
 
-// --- API endpoints ---
+// --- API endpoints --- 
 const proxyBaseUrl = "https://atrealtime.vercel.app";
 const realtimeUrl = `${proxyBaseUrl}/api/realtime`;
 const routesUrl   = `${proxyBaseUrl}/api/routes`;
@@ -263,3 +263,4 @@ async function fetchVehicles(){
   fetchVehicles();
   setInterval(fetchVehicles, 15000);
 })();
+
