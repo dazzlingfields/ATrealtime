@@ -5,7 +5,7 @@ const proxyBaseUrl = "https://atrealtime.vercel.app";
 const realtimeUrl = `${proxyBaseUrl}/api/realtime`;
 const routesUrl   = `${proxyBaseUrl}/api/routes`;
 const tripsUrl    = `${proxyBaseUrl}/api/trips`;
-const busTypesUrl = `${proxyBaseUrl}/api/bustypes`;
+const busTypesUrl = "https://raw.githubusercontent.com/dazzlingfields/ATrealtime/refs/heads/main/busTypes.json";
 
 // --- Map initialization ---
 const map = L.map("map").setView([-36.8485, 174.7633], 12);
@@ -250,3 +250,4 @@ async function init() {
 }
 
 init();
+
