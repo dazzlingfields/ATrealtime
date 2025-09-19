@@ -1,4 +1,4 @@
-// ================== v4.13 - Realtime Vehicle Tracking with Vehicle Count + Bus Type + Inactivity Indicator ==================
+// ================== v4.13 - Latest ==================
 
 // --- API endpoints ---
 const proxyBaseUrl = "https://atrealtime.vercel.app";
@@ -327,3 +327,4 @@ async function fetchVehicles(){
   fetchVehicles();
   setInterval(fetchVehicles, 15000);
 })();
+
