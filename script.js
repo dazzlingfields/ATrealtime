@@ -136,8 +136,8 @@ async function fetchVehicles(){
     newVehicleIds.add(vehicleId);
 
     const vehicleLabel = v.vehicle.vehicle?.label || "N/A"; // raw number
-    const operator = vehicleLabel.slice(0,2); // first 2 letters for operator
-    const vehicleNumber = Number(vehicleLabel.slice(2)) || 0; // remaining digits
+    const operator = v.vehicle.vehicle?.operator_id || vehicleLabel.slice(0,2); // operator code
+    const vehicleNumber = Number(vehicleLabel) || Number(vehicleLabel.slice(2)) || 0; // numeric label
     const licensePlate = v.vehicle.vehicle?.license_plate || "N/A";
     const occupancyStatus = v.vehicle.occupancy_status;
     const speedKmh = v.vehicle.position.speed ? v.vehicle.position.speed * 3.6 : 0;
@@ -189,12 +189,12 @@ async function fetchVehicles(){
     const maxSpeed = typeKey==="bus"?100:typeKey==="train"?160:typeKey==="ferry"?80:180;
     const speed = speedKmh >= 0 && speedKmh <= maxSpeed ? speedKmh.toFixed(1)+" km/h" : "N/A";
 
-    // --- Popup content ---
+    // --- Popup content (operator+vehicle combined for display, separate for bus type) ---
+    const displayVehicle = operator + vehicleLabel;
     const popupContent = `
       <b>Route:</b> ${routeName}<br>
       <b>Destination:</b> ${destination}<br>
-      <b>Operator:</b> ${operator}<br>
-      <b>Vehicle Number:</b> ${vehicleNumber}<br>
+      <b>Vehicle:</b> ${displayVehicle}<br>
       ${busType?`<b>Bus Model:</b> ${busType}<br>`:""}
       <b>Number Plate:</b> ${licensePlate}<br>
       <b>Speed:</b> ${speed}<br>
