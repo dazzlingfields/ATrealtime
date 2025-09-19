@@ -1,4 +1,14 @@
 export default async function handler(req, res) {
+  // Set CORS headers for all responses
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET,OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+
+  // Handle preflight request
+  if (req.method === "OPTIONS") {
+    return res.status(200).end();
+  }
+
   try {
     const response = await fetch("https://api.at.govt.nz/realtime/legacy", {
       headers: {
@@ -11,8 +21,6 @@ export default async function handler(req, res) {
     }
 
     const data = await response.json();
-
-    res.setHeader("Access-Control-Allow-Origin", "*"); // allow browser requests
     res.status(200).json(data);
   } catch (err) {
     res.status(500).json({ error: err.message });
