@@ -31,6 +31,25 @@ const layerGroups = {
   other: L.layerGroup().addTo(map)
 };
 
+// --- Checkbox handlers: toggle vehicle type visibility ---
+const typeCheckboxes = {
+  bus: document.getElementById("bus-checkbox"),
+  train: document.getElementById("train-checkbox"),
+  ferry: document.getElementById("ferry-checkbox"),
+  other: document.getElementById("other-checkbox")
+};
+
+Object.keys(typeCheckboxes).forEach(typeKey => {
+  typeCheckboxes[typeKey].addEventListener("change", () => {
+    if(typeCheckboxes[typeKey].checked){
+      map.addLayer(layerGroups[typeKey]);
+    } else {
+      map.removeLayer(layerGroups[typeKey]);
+    }
+    updateVehicleCount(); // Optional: update count dynamically
+  });
+});
+
 // --- Vehicle styles ---
 const vehicleColors = { 3:"#007bff", 2:"#dc3545", 4:"#ffc107", default:"#6c757d" };
 const occupancyLabels = {
@@ -119,6 +138,17 @@ function addVehicleMarker(vehicleId, lat, lon, popupContent, color, typeKey){
   }
 }
 
+// --- Update vehicle count dynamically ---
+function updateVehicleCount(){
+  let count = 0;
+  Object.keys(layerGroups).forEach(typeKey => {
+    if(typeCheckboxes[typeKey].checked){
+      count += layerGroups[typeKey].getLayers().length;
+    }
+  });
+  vehicleCountBox.textContent = `Vehicles: ${count} | Last refresh: ${new Date().toLocaleTimeString()}`;
+}
+
 // --- Fetch all vehicles ---
 async function fetchVehicles(){
   const json = await safeFetch(realtimeUrl);
@@ -135,9 +165,9 @@ async function fetchVehicles(){
     const lat = v.vehicle.position.latitude, lon = v.vehicle.position.longitude;
     newVehicleIds.add(vehicleId);
 
-    const vehicleLabel = v.vehicle.vehicle?.label || "N/A"; // raw number
-    const operator = v.vehicle.vehicle?.operator_id || vehicleLabel.slice(0,2); // operator code
-    const vehicleNumber = Number(vehicleLabel) || Number(vehicleLabel.slice(2)) || 0; // numeric label
+    const vehicleLabel = v.vehicle.vehicle?.label || "N/A"; 
+    const operator = v.vehicle.vehicle?.operator_id || vehicleLabel.slice(0,2);
+    const vehicleNumber = Number(vehicleLabel) || Number(vehicleLabel.slice(2)) || 0; 
     const licensePlate = v.vehicle.vehicle?.license_plate || "N/A";
     const occupancyStatus = v.vehicle.occupancy_status;
     const speedKmh = v.vehicle.position.speed ? v.vehicle.position.speed * 3.6 : 0;
@@ -189,9 +219,7 @@ async function fetchVehicles(){
     const maxSpeed = typeKey==="bus"?100:typeKey==="train"?160:typeKey==="ferry"?80:180;
     const speed = speedKmh >= 0 && speedKmh <= maxSpeed ? speedKmh.toFixed(1)+" km/h" : "N/A";
 
-    // --- Popup content (operator+vehicle combined for display, separate for bus type) ---
-  const displayVehicle = vehicleLabel; // show only the raw label
-
+    const displayVehicle = vehicleLabel;
     const popupContent = `
       <b>Route:</b> ${routeName}<br>
       <b>Destination:</b> ${destination}<br>
@@ -228,7 +256,7 @@ async function fetchVehicles(){
   });
 
   debugBox.textContent = `Realtime update complete.`;
-  vehicleCountBox.textContent = `Vehicles: ${newVehicleIds.size} | Last refresh: ${new Date().toLocaleTimeString()}`;
+  updateVehicleCount();
 }
 
 // --- Init ---
@@ -238,4 +266,3 @@ async function fetchVehicles(){
   fetchVehicles();
   setInterval(fetchVehicles, 15000);
 })();
-
