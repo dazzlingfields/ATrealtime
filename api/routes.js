@@ -2,6 +2,16 @@
 let cachedRoutes = null;
 
 export default async function handler(req, res) {
+  // Always set CORS headers
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET,OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+
+  // Handle preflight request
+  if (req.method === "OPTIONS") {
+    return res.status(200).end();
+  }
+
   try {
     // Fetch and cache all routes if not already cached
     if (!cachedRoutes) {
@@ -28,7 +38,6 @@ export default async function handler(req, res) {
       result = { data: cachedRoutes };
     }
 
-    res.setHeader("Access-Control-Allow-Origin", "*");
     res.status(200).json(result);
 
   } catch (err) {
