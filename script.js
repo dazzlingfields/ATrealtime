@@ -190,7 +190,8 @@ async function fetchVehicles(){
     const speed = speedKmh >= 0 && speedKmh <= maxSpeed ? speedKmh.toFixed(1)+" km/h" : "N/A";
 
     // --- Popup content (operator+vehicle combined for display, separate for bus type) ---
-    const displayVehicle = operator + vehicleLabel;
+  const displayVehicle = vehicleLabel; // show only the raw label
+
     const popupContent = `
       <b>Route:</b> ${routeName}<br>
       <b>Destination:</b> ${destination}<br>
@@ -237,3 +238,4 @@ async function fetchVehicles(){
   fetchVehicles();
   setInterval(fetchVehicles, 15000);
 })();
+
