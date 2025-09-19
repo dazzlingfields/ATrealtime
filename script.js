@@ -1,4 +1,4 @@
-// ================== v4.12 - Realtime Vehicle Tracking with Vehicle Count + Bus Type ==================
+// ================== v4.13 - Realtime Vehicle Tracking with Vehicle Count + Bus Type + Inactivity Indicator ==================
 
 // --- API endpoints ---
 const proxyBaseUrl = "https://atrealtime.vercel.app";
@@ -21,7 +21,9 @@ const vehicleCountBox = document.getElementById("vehicle-count");
 const routes = {};
 const trips = {};
 const vehicleMarkers = {};
+const inactiveMarkers = {}; // New layer for external inactive indicators
 let busTypes = {};
+const vehicleLastSeen = {}; // Track last position and timestamp for inactivity
 
 // --- Layer groups ---
 const layerGroups = {
@@ -31,7 +33,7 @@ const layerGroups = {
   other: L.layerGroup().addTo(map)
 };
 
-// --- Checkbox handlers: toggle vehicle type visibility ---
+// --- Checkbox connections ---
 const typeCheckboxes = {
   bus: document.getElementById("bus-checkbox"),
   train: document.getElementById("train-checkbox"),
@@ -39,6 +41,7 @@ const typeCheckboxes = {
   other: document.getElementById("other-checkbox")
 };
 
+// Toggle layers when checkbox changes
 Object.keys(typeCheckboxes).forEach(typeKey => {
   typeCheckboxes[typeKey].addEventListener("change", () => {
     if(typeCheckboxes[typeKey].checked){
@@ -46,7 +49,7 @@ Object.keys(typeCheckboxes).forEach(typeKey => {
     } else {
       map.removeLayer(layerGroups[typeKey]);
     }
-    updateVehicleCount(); // Optional: update count dynamically
+    updateVehicleCount();
   });
 });
 
@@ -125,25 +128,78 @@ function pairAMTrains(inService, outOfService){
   return pairs;
 }
 
-// --- Add/update vehicle marker ---
+// --- Add/update vehicle marker with inactivity ---
 function addVehicleMarker(vehicleId, lat, lon, popupContent, color, typeKey){
+  const now = Date.now();
+
+  // --- Check inactivity ---
+  const last = vehicleLastSeen[vehicleId];
+  let inactive = false;
+  let inactiveDuration = 0;
+
+  if(last){
+    const distanceMoved = distanceMeters(lat, lon, last.lat, last.lon);
+    inactiveDuration = now - last.timestamp;
+
+    if(distanceMoved < 10 && inactiveDuration > 5 * 60 * 1000){ // 5 minutes
+      inactive = true;
+    } else if(distanceMoved >= 10){
+      last.timestamp = now; // Reset timer if moved
+    }
+  }
+
+  vehicleLastSeen[vehicleId] = { lat, lon, timestamp: last?.timestamp || now };
+
+  // Format duration
+  let durationStr = "";
+  if(inactive){
+    const totalSec = Math.floor(inactiveDuration / 1000);
+    const minutes = Math.floor(totalSec / 60);
+    const seconds = totalSec % 60;
+    durationStr = `${minutes}m ${seconds}s`;
+  }
+
+  // Update popup
+  let popupHtml = popupContent;
+  if(inactive){
+    popupHtml += `<br><b>Status:</b> Inactive for ${durationStr}`;
+  }
+
+  // --- Existing marker logic ---
   if(vehicleMarkers[vehicleId]){
     const marker = vehicleMarkers[vehicleId];
     marker.setLatLng([lat, lon]);
     marker.setIcon(getVehicleIcon(color));
-    if(marker.getPopup()) marker.getPopup().setContent(popupContent);
+    if(marker.getPopup()) marker.getPopup().setContent(popupHtml);
   } else {
-    const marker = L.marker([lat, lon], {icon:getVehicleIcon(color)}).addTo(layerGroups[typeKey]).bindPopup(popupContent);
+    const marker = L.marker([lat, lon], {icon:getVehicleIcon(color)}).addTo(layerGroups[typeKey]).bindPopup(popupHtml);
     vehicleMarkers[vehicleId] = marker;
+  }
+
+  // --- Add external inactive marker ---
+  if(inactive){
+    if(inactiveMarkers[vehicleId]){
+      inactiveMarkers[vehicleId].setLatLng([lat, lon]);
+    } else {
+      const circle = L.circle([lat, lon], {radius:15, color:"red", weight:2, fillOpacity:0.3}).addTo(map);
+      inactiveMarkers[vehicleId] = circle;
+    }
+  } else {
+    if(inactiveMarkers[vehicleId]){
+      map.removeLayer(inactiveMarkers[vehicleId]);
+      delete inactiveMarkers[vehicleId];
+    }
   }
 }
 
-// --- Update vehicle count dynamically ---
+// --- Update vehicle count dynamically with checkbox filtering ---
 function updateVehicleCount(){
   let count = 0;
-  Object.keys(layerGroups).forEach(typeKey => {
-    if(typeCheckboxes[typeKey].checked){
-      count += layerGroups[typeKey].getLayers().length;
+  Object.keys(vehicleMarkers).forEach(id => {
+    const marker = vehicleMarkers[id];
+    const typeKey = Object.keys(layerGroups).find(key => layerGroups[key].hasLayer(marker));
+    if(typeKey && typeCheckboxes[typeKey].checked){
+      count++;
     }
   });
   vehicleCountBox.textContent = `Vehicles: ${count} | Last refresh: ${new Date().toLocaleTimeString()}`;
@@ -165,9 +221,9 @@ async function fetchVehicles(){
     const lat = v.vehicle.position.latitude, lon = v.vehicle.position.longitude;
     newVehicleIds.add(vehicleId);
 
-    const vehicleLabel = v.vehicle.vehicle?.label || "N/A"; 
+    const vehicleLabel = v.vehicle.vehicle?.label || "N/A";
     const operator = v.vehicle.vehicle?.operator_id || vehicleLabel.slice(0,2);
-    const vehicleNumber = Number(vehicleLabel) || Number(vehicleLabel.slice(2)) || 0; 
+    const vehicleNumber = Number(vehicleLabel) || Number(vehicleLabel.slice(2)) || 0;
     const licensePlate = v.vehicle.vehicle?.license_plate || "N/A";
     const occupancyStatus = v.vehicle.occupancy_status;
     const speedKmh = v.vehicle.position.speed ? v.vehicle.position.speed * 3.6 : 0;
@@ -177,7 +233,7 @@ async function fetchVehicles(){
     const routeId = v.vehicle?.trip?.route_id, tripId = v.vehicle?.trip?.trip_id;
     let busType = "";
 
-    // --- Determine vehicle type from route ---
+    // Determine vehicle type
     if(routeId && routes[routeId]){
       const r = routes[routeId];
       switch(r.route_type){
@@ -188,7 +244,7 @@ async function fetchVehicles(){
       routeName = r.route_short_name || "N/A";
     } else if(vehicleLabel.startsWith("AM")) typeKey = "bus";
 
-    // --- Determine destination ---
+    // Destination
     if(v.vehicle.trip?.trip_headsign) destination = v.vehicle.trip.trip_headsign;
     else if(tripId){
       if(trips[tripId]) destination = trips[tripId].trip_headsign || "N/A";
@@ -203,7 +259,7 @@ async function fetchVehicles(){
       });
     }
 
-    // --- Determine bus type from JSON ---
+    // Bus type
     if(typeKey === "bus" && busTypes && Object.keys(busTypes).length > 0){
       for(const model in busTypes){
         const operators = busTypes[model];
@@ -215,10 +271,11 @@ async function fetchVehicles(){
       }
     }
 
-    // --- Speed limits ---
+    // Speed limits
     const maxSpeed = typeKey==="bus"?100:typeKey==="train"?160:typeKey==="ferry"?80:180;
     const speed = speedKmh >= 0 && speedKmh <= maxSpeed ? speedKmh.toFixed(1)+" km/h" : "N/A";
 
+    // Popup content
     const displayVehicle = vehicleLabel;
     const popupContent = `
       <b>Route:</b> ${routeName}<br>
@@ -238,7 +295,7 @@ async function fetchVehicles(){
     addVehicleMarker(vehicleId, lat, lon, popupContent, color, typeKey);
   }));
 
-  // --- Pair AM trains ---
+  // Pair AM trains
   pairAMTrains(inServiceAM, outOfServiceAM).forEach(pair=>{
     const marker = vehicleMarkers[pair.inTrain.vehicleId];
     if(marker){
@@ -247,11 +304,15 @@ async function fetchVehicles(){
     }
   });
 
-  // --- Remove stale markers ---
+  // Remove stale markers
   Object.keys(vehicleMarkers).forEach(id => { 
     if(!newVehicleIds.has(id)){ 
       map.removeLayer(vehicleMarkers[id]); 
       delete vehicleMarkers[id]; 
+      if(inactiveMarkers[id]){
+        map.removeLayer(inactiveMarkers[id]);
+        delete inactiveMarkers[id];
+      }
     } 
   });
 
