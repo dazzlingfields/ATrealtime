@@ -62,8 +62,8 @@ const occupancyLabels = {
 const getVehicleIcon = color => L.divIcon({
   className:'vehicle-icon',
   html:`<div style="background-color:${color};width:12px;height:12px;border-radius:50%;border:2px solid white;"></div>`,
-  iconSize:[16,16],
-  iconAnchor:[8,8]
+  iconSize:[12,12],
+  iconAnchor:[6,6]
 });
 
 // --- Safe fetch ---
@@ -327,4 +327,5 @@ async function fetchVehicles(){
   fetchVehicles();
   setInterval(fetchVehicles, 15000);
 })();
+
 
