@@ -8,10 +8,44 @@ const tripsUrl    = `${proxyBaseUrl}/api/trips`;
 const busTypesUrl = "https://raw.githubusercontent.com/dazzlingfields/ATrealtime/refs/heads/main/busTypes.json";
 
 // --- Map initialization ---
-const map = L.map("map").setView([-36.8485, 174.7633], 12);
-L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+// Base layers
+const light = L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", {
+  attribution: "&copy; <a href='https://www.openstreetmap.org/'>OpenStreetMap</a> contributors &copy; <a href='https://carto.com/'>CARTO</a>",
+  subdomains: "abcd",
+  maxZoom: 20
+});
+
+const dark = L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+  attribution: "&copy; <a href='https://www.openstreetmap.org/'>OpenStreetMap</a> contributors &copy; <a href='https://carto.com/'>CARTO</a>",
+  subdomains: "abcd",
+  maxZoom: 20
+});
+
+const osm = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
   attribution: "&copy; OpenStreetMap contributors"
-}).addTo(map);
+});
+
+const satellite = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", {
+  attribution: "Tiles © Esri"
+});
+
+// Map with light as default
+const map = L.map("map", {
+  center: [-36.8485, 174.7633],
+  zoom: 12,
+  layers: [light] // default
+});
+
+// Layer control
+const baseMaps = {
+  "Light": light,
+  "Dark": dark,
+  "OpenStreetMap": osm,
+  "Satellite": satellite
+};
+
+L.control.layers(baseMaps).addTo(map);
+
 
 // --- Vehicle data structures ---
 const vehicleMarkers = {};
@@ -250,4 +284,5 @@ async function init() {
 }
 
 init();
+
 
