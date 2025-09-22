@@ -1,4 +1,4 @@
-// ================== v4.16 - Realtime Vehicle Tracking (Optimised with Lazy Trips) ==================
+// ================== v4.16 - Realtime Vehicle Tracking (Checkbox Layers + Fixed Route Mapping) ==================
 
 // --- API endpoints ---
 const proxyBaseUrl = "https://atrealtime.vercel.app";
@@ -13,14 +13,17 @@ const light = L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{
   subdomains: "abcd",
   maxZoom: 20
 });
+
 const dark = L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
   attribution: "&copy; OpenStreetMap contributors &copy; CARTO",
   subdomains: "abcd",
   maxZoom: 20
 });
+
 const osm = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
   attribution: "&copy; OpenStreetMap contributors"
 });
+
 const satellite = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", {
   attribution: "Tiles © Esri"
 });
@@ -36,19 +39,17 @@ L.control.layers(baseMaps).addTo(map);
 
 // --- Vehicle data structures ---
 const vehicleMarkers = {};
-const trips = {}; // cache for loaded trips
+const trips = {};
 let routes = {};
 let busTypes = {};
 const debugBox = document.getElementById("debug");
 
 // --- Vehicle layers ---
 const vehicleLayers = {
-  all: L.layerGroup().addTo(map),
   bus: L.layerGroup().addTo(map),
   train: L.layerGroup().addTo(map),
   ferry: L.layerGroup().addTo(map)
 };
-let activeLayer = "all";
 
 // --- Vehicle colors & occupancy ---
 const vehicleColors = { 2: "red", 3: "blue", 4: "green", default: "gray" };
@@ -82,8 +83,8 @@ async function safeFetch(url) {
   }
 }
 
-// --- Add marker ---
-function addVehicleMarker(id, lat, lon, popupContent, color, type, tripId) {
+// --- Add or update marker ---
+function addVehicleMarker(id, lat, lon, popupContent, color, type) {
   if (vehicleMarkers[id]) {
     vehicleMarkers[id].setLatLng([lat, lon]);
     vehicleMarkers[id].setPopupContent(popupContent);
@@ -95,29 +96,8 @@ function addVehicleMarker(id, lat, lon, popupContent, color, type, tripId) {
       weight: 1,
       opacity: 1,
       fillOpacity: 0.9
-    }).addTo(vehicleLayers[type] || vehicleLayers.all);
-
+    }).addTo(vehicleLayers[type] || map);
     marker.bindPopup(popupContent);
-
-    // Lazy trip fetch when popup is opened
-    if (tripId) {
-      marker.on("popupopen", async () => {
-        if (!trips[tripId]) {
-          const tripJson = await safeFetch(`${tripsUrl}?ids=${tripId}`);
-          if (tripJson?.data && tripJson.data.length > 0) {
-            const trip = tripJson.data[0].attributes || tripJson.data[0];
-            trips[tripId] = trip;
-            const oldContent = marker.getPopup().getContent();
-            const updated = oldContent.replace(
-              /<b>Destination:<\/b> N\/A/,
-              `<b>Destination:</b> ${trip.trip_headsign || "N/A"}`
-            );
-            marker.setPopupContent(updated);
-          }
-        }
-      });
-    }
-
     vehicleMarkers[id] = marker;
   }
 }
@@ -140,24 +120,16 @@ function updateVehicleCount() {
   document.getElementById("vehicle-count").textContent = `Buses: ${busCount}, Trains: ${trainCount}, Ferries: ${ferryCount}`;
 }
 
-// --- Layer tab system ---
-const tabs = document.querySelectorAll("#tabs button");
-tabs.forEach(tab => {
-  tab.addEventListener("click", () => {
-    tabs.forEach(t => t.classList.remove("active"));
-    tab.classList.add("active");
-    activeLayer = tab.dataset.layer;
-    updateLayerVisibility();
-    fetchVehicles();
-  });
-});
-
+// --- Checkbox filter system ---
+const checkboxes = document.querySelectorAll("#filters input[type=checkbox]");
 function updateLayerVisibility() {
-  Object.keys(vehicleLayers).forEach(key => {
-    if (activeLayer === "all" || activeLayer === key) map.addLayer(vehicleLayers[key]);
-    else map.removeLayer(vehicleLayers[key]);
+  checkboxes.forEach(cb => {
+    const layer = vehicleLayers[cb.dataset.layer];
+    if (cb.checked) map.addLayer(layer);
+    else map.removeLayer(layer);
   });
 }
+checkboxes.forEach(cb => cb.addEventListener("change", updateLayerVisibility));
 
 // --- Fetch vehicles ---
 async function fetchVehicles() {
@@ -169,11 +141,25 @@ async function fetchVehicles() {
   const vehicles = json?.response?.entity || json?.entity || [];
   const newVehicleIds = new Set();
   const inServiceAM = [], outOfServiceAM = [];
+  const missingTripIds = new Set();
+
+  vehicles.forEach(v => {
+    const vehicleId = v.vehicle?.vehicle?.id;
+    if (!v.vehicle || !v.vehicle.position || !vehicleId) return;
+    newVehicleIds.add(vehicleId);
+    const tripId = v.vehicle?.trip?.trip_id;
+    if (tripId && !trips[tripId]) missingTripIds.add(tripId);
+  });
+
+  if (missingTripIds.size) {
+    const ids = Array.from(missingTripIds).join(",");
+    const tripJson = await safeFetch(`${tripsUrl}?ids=${ids}`);
+    if (tripJson?.data) tripJson.data.forEach(t => trips[t.id] = t.attributes || t);
+  }
 
   await Promise.all(vehicles.map(async v => {
     const vehicleId = v.vehicle?.vehicle?.id;
     if (!v.vehicle || !v.vehicle.position || !vehicleId) return;
-    newVehicleIds.add(vehicleId);
 
     let typeKey = "other";
     const routeId = v.vehicle?.trip?.route_id;
@@ -184,9 +170,9 @@ async function fetchVehicles() {
         case 3: typeKey = "bus"; break;
         case 4: typeKey = "ferry"; break;
       }
-    } else if (v.vehicle.vehicle?.label.startsWith("AM")) typeKey = "bus";
-
-    if (activeLayer !== "all" && activeLayer !== typeKey) return;
+    } else if (v.vehicle.vehicle?.label.startsWith("AM")) {
+      typeKey = "bus";
+    }
 
     const lat = v.vehicle.position.latitude;
     const lon = v.vehicle.position.longitude;
@@ -212,12 +198,12 @@ async function fetchVehicles() {
       }
     }
 
-    const routeName = routes[routeId]?.route_short_name || "N/A";
-    const destination = v.vehicle.trip?.trip_headsign || "N/A";
+    let destination = v.vehicle.trip?.trip_headsign || "N/A";
     const tripId = v.vehicle?.trip?.trip_id;
+    if (tripId && trips[tripId]) destination = trips[tripId].trip_headsign || "N/A";
 
     const popupContent = `
-      <b>Route:</b> ${routeName}<br>
+      <b>Route:</b> ${routes[routeId]?.route_short_name || "N/A"}<br>
       <b>Destination:</b> ${destination}<br>
       <b>Vehicle:</b> ${vehicleLabel}<br>
       ${busType ? `<b>Bus Model:</b> ${busType}<br>` : ""}
@@ -231,7 +217,7 @@ async function fetchVehicles() {
       else outOfServiceAM.push({ vehicleId, lat, lon, speedKmh, vehicleLabel });
     }
 
-    addVehicleMarker(vehicleId, lat, lon, popupContent, color, typeKey, tripId);
+    addVehicleMarker(vehicleId, lat, lon, popupContent, color, typeKey);
   }));
 
   // AM train pairing
@@ -243,7 +229,6 @@ async function fetchVehicles() {
     }
   });
 
-  // Remove stale markers
   Object.keys(vehicleMarkers).forEach(id => {
     if (!newVehicleIds.has(id)) {
       map.removeLayer(vehicleMarkers[id]);
@@ -251,14 +236,25 @@ async function fetchVehicles() {
     }
   });
 
-  debugBox.textContent = `Realtime update complete for ${activeLayer}.`;
+  debugBox.textContent = `Realtime update complete.`;
   updateVehicleCount();
 }
 
 // --- Init ---
 async function init() {
+  // Load routes with attributes mapped properly
   const routesJson = await safeFetch(routesUrl);
-  if (routesJson?.data) routesJson.data.forEach(r => { routes[r.id] = r; });
+  if (routesJson?.data) {
+    routesJson.data.forEach(r => {
+      const attrs = r.attributes || r;
+      routes[r.id] = {
+        route_type: attrs.route_type,
+        route_short_name: attrs.route_short_name,
+        route_long_name: attrs.route_long_name,
+        agency_id: attrs.agency_id
+      };
+    });
+  }
 
   const busTypesJson = await safeFetch(busTypesUrl);
   if (busTypesJson) busTypes = busTypesJson;
