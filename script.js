@@ -1,4 +1,4 @@
-// ================== v4.15 - Realtime Vehicle Tracking (Tab-aware + Visibility-aware) ==================
+// ================== v4.16 - Realtime Vehicle Tracking (Optimised with Lazy Trips) ==================
 
 // --- API endpoints ---
 const proxyBaseUrl = "https://atrealtime.vercel.app";
@@ -13,17 +13,14 @@ const light = L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{
   subdomains: "abcd",
   maxZoom: 20
 });
-
 const dark = L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
   attribution: "&copy; OpenStreetMap contributors &copy; CARTO",
   subdomains: "abcd",
   maxZoom: 20
 });
-
 const osm = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
   attribution: "&copy; OpenStreetMap contributors"
 });
-
 const satellite = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", {
   attribution: "Tiles © Esri"
 });
@@ -39,7 +36,7 @@ L.control.layers(baseMaps).addTo(map);
 
 // --- Vehicle data structures ---
 const vehicleMarkers = {};
-const trips = {};
+const trips = {}; // cache for loaded trips
 let routes = {};
 let busTypes = {};
 const debugBox = document.getElementById("debug");
@@ -86,7 +83,7 @@ async function safeFetch(url) {
 }
 
 // --- Add marker ---
-function addVehicleMarker(id, lat, lon, popupContent, color, type) {
+function addVehicleMarker(id, lat, lon, popupContent, color, type, tripId) {
   if (vehicleMarkers[id]) {
     vehicleMarkers[id].setLatLng([lat, lon]);
     vehicleMarkers[id].setPopupContent(popupContent);
@@ -99,7 +96,28 @@ function addVehicleMarker(id, lat, lon, popupContent, color, type) {
       opacity: 1,
       fillOpacity: 0.9
     }).addTo(vehicleLayers[type] || vehicleLayers.all);
+
     marker.bindPopup(popupContent);
+
+    // Lazy trip fetch when popup is opened
+    if (tripId) {
+      marker.on("popupopen", async () => {
+        if (!trips[tripId]) {
+          const tripJson = await safeFetch(`${tripsUrl}?ids=${tripId}`);
+          if (tripJson?.data && tripJson.data.length > 0) {
+            const trip = tripJson.data[0].attributes || tripJson.data[0];
+            trips[tripId] = trip;
+            const oldContent = marker.getPopup().getContent();
+            const updated = oldContent.replace(
+              /<b>Destination:<\/b> N\/A/,
+              `<b>Destination:</b> ${trip.trip_headsign || "N/A"}`
+            );
+            marker.setPopupContent(updated);
+          }
+        }
+      });
+    }
+
     vehicleMarkers[id] = marker;
   }
 }
@@ -151,25 +169,11 @@ async function fetchVehicles() {
   const vehicles = json?.response?.entity || json?.entity || [];
   const newVehicleIds = new Set();
   const inServiceAM = [], outOfServiceAM = [];
-  const missingTripIds = new Set();
-
-  vehicles.forEach(v => {
-    const vehicleId = v.vehicle?.vehicle?.id;
-    if (!v.vehicle || !v.vehicle.position || !vehicleId) return;
-    newVehicleIds.add(vehicleId);
-    const tripId = v.vehicle?.trip?.trip_id;
-    if (tripId && !trips[tripId]) missingTripIds.add(tripId);
-  });
-
-  if (missingTripIds.size) {
-    const ids = Array.from(missingTripIds).join(",");
-    const tripJson = await safeFetch(`${tripsUrl}?ids=${ids}`);
-    if (tripJson?.data) tripJson.data.forEach(t => trips[t.id] = t.attributes || t);
-  }
 
   await Promise.all(vehicles.map(async v => {
     const vehicleId = v.vehicle?.vehicle?.id;
     if (!v.vehicle || !v.vehicle.position || !vehicleId) return;
+    newVehicleIds.add(vehicleId);
 
     let typeKey = "other";
     const routeId = v.vehicle?.trip?.route_id;
@@ -208,12 +212,12 @@ async function fetchVehicles() {
       }
     }
 
-    let destination = v.vehicle.trip?.trip_headsign || "N/A";
+    const routeName = routes[routeId]?.route_short_name || "N/A";
+    const destination = v.vehicle.trip?.trip_headsign || "N/A";
     const tripId = v.vehicle?.trip?.trip_id;
-    if (tripId && trips[tripId]) destination = trips[tripId].trip_headsign || "N/A";
 
     const popupContent = `
-      <b>Route:</b> ${routes[routeId]?.route_short_name || "N/A"}<br>
+      <b>Route:</b> ${routeName}<br>
       <b>Destination:</b> ${destination}<br>
       <b>Vehicle:</b> ${vehicleLabel}<br>
       ${busType ? `<b>Bus Model:</b> ${busType}<br>` : ""}
@@ -227,7 +231,7 @@ async function fetchVehicles() {
       else outOfServiceAM.push({ vehicleId, lat, lon, speedKmh, vehicleLabel });
     }
 
-    addVehicleMarker(vehicleId, lat, lon, popupContent, color, typeKey);
+    addVehicleMarker(vehicleId, lat, lon, popupContent, color, typeKey, tripId);
   }));
 
   // AM train pairing
@@ -239,6 +243,7 @@ async function fetchVehicles() {
     }
   });
 
+  // Remove stale markers
   Object.keys(vehicleMarkers).forEach(id => {
     if (!newVehicleIds.has(id)) {
       map.removeLayer(vehicleMarkers[id]);
