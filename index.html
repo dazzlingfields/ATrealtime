@@ -77,10 +77,12 @@
 <div id="controls">
   <div class="control-group">
     <h4>Vehicle Display</h4>
-    <label><input type="checkbox" id="bus-checkbox" checked> Buses</label>
-    <label><input type="checkbox" id="train-checkbox" checked> Trains</label>
-    <label><input type="checkbox" id="ferry-checkbox" checked> Ferries</label>
-    <label><input type="checkbox" id="other-checkbox" checked> Out of Service </label>
+    <div id="tabs">
+  <button data-layer="all" class="active">All</button>
+  <button data-layer="bus">Buses</button>
+  <button data-layer="train">Trains</button>
+  <button data-layer="ferry">Ferries</button>
+</div>
 
   </div>
   <div id="debug">Realtime status...</div>
@@ -100,6 +102,7 @@
 
 </body>
 </html>
+
 
 
 
