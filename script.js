@@ -1,4 +1,4 @@
-// ================== v4.16 - Realtime Vehicle Tracking (Checkbox Layers + Fixed Route Mapping) ==================
+// ================== v4.20 - Realtime Vehicle Tracking (In-Service, Out-of-Service, Bus Types, AM Trains) ==================
 
 // --- API endpoints ---
 const proxyBaseUrl = "https://atrealtime.vercel.app";
@@ -13,17 +13,14 @@ const light = L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{
   subdomains: "abcd",
   maxZoom: 20
 });
-
 const dark = L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
   attribution: "&copy; OpenStreetMap contributors &copy; CARTO",
   subdomains: "abcd",
   maxZoom: 20
 });
-
 const osm = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
   attribution: "&copy; OpenStreetMap contributors"
 });
-
 const satellite = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", {
   attribution: "Tiles © Esri"
 });
@@ -33,7 +30,6 @@ const map = L.map("map", {
   zoom: 12,
   layers: [light]
 });
-
 const baseMaps = { "Light": light, "Dark": dark, "OSM": osm, "Satellite": satellite };
 L.control.layers(baseMaps).addTo(map);
 
@@ -48,11 +44,12 @@ const debugBox = document.getElementById("debug");
 const vehicleLayers = {
   bus: L.layerGroup().addTo(map),
   train: L.layerGroup().addTo(map),
-  ferry: L.layerGroup().addTo(map)
+  ferry: L.layerGroup().addTo(map),
+  out: L.layerGroup().addTo(map) // out-of-service
 };
 
 // --- Vehicle colors & occupancy ---
-const vehicleColors = { 2: "red", 3: "blue", 4: "green", default: "gray" };
+const vehicleColors = { 2: "red", 3: "blue", 4: "green", out: "gray", default: "black" };
 const occupancyLabels = {
   EMPTY: "Empty",
   MANY_SEATS_AVAILABLE: "Many Seats Available",
@@ -67,7 +64,7 @@ const occupancyLabels = {
 let isTabActive = true;
 document.addEventListener("visibilitychange", () => {
   isTabActive = document.visibilityState === "visible";
-  if (isTabActive) fetchVehicles(); // fetch immediately when user returns
+  if (isTabActive) fetchVehicles();
 });
 
 // --- Safe fetch helper ---
@@ -96,7 +93,7 @@ function addVehicleMarker(id, lat, lon, popupContent, color, type) {
       weight: 1,
       opacity: 1,
       fillOpacity: 0.9
-    }).addTo(vehicleLayers[type] || map);
+    }).addTo(vehicleLayers[type]);
     marker.bindPopup(popupContent);
     vehicleMarkers[id] = marker;
   }
@@ -117,7 +114,10 @@ function updateVehicleCount() {
   const busCount = Object.values(vehicleMarkers).filter(m => m.options.fillColor === vehicleColors[3]).length;
   const trainCount = Object.values(vehicleMarkers).filter(m => m.options.fillColor === vehicleColors[2]).length;
   const ferryCount = Object.values(vehicleMarkers).filter(m => m.options.fillColor === vehicleColors[4]).length;
-  document.getElementById("vehicle-count").textContent = `Buses: ${busCount}, Trains: ${trainCount}, Ferries: ${ferryCount}`;
+  const outCount = Object.values(vehicleMarkers).filter(m => m.options.fillColor === vehicleColors.out).length;
+
+  document.getElementById("vehicle-count").textContent =
+    `Buses: ${busCount}, Trains: ${trainCount}, Ferries: ${ferryCount}, Out of Service: ${outCount}`;
 }
 
 // --- Checkbox filter system ---
@@ -133,7 +133,7 @@ checkboxes.forEach(cb => cb.addEventListener("change", updateLayerVisibility));
 
 // --- Fetch vehicles ---
 async function fetchVehicles() {
-  if (!isTabActive) return; // skip updates if tab inactive
+  if (!isTabActive) return;
 
   const json = await safeFetch(realtimeUrl);
   if (!json) return;
@@ -144,9 +144,6 @@ async function fetchVehicles() {
   const missingTripIds = new Set();
 
   vehicles.forEach(v => {
-    const vehicleId = v.vehicle?.vehicle?.id;
-    if (!v.vehicle || !v.vehicle.position || !vehicleId) return;
-    newVehicleIds.add(vehicleId);
     const tripId = v.vehicle?.trip?.trip_id;
     if (tripId && !trips[tripId]) missingTripIds.add(tripId);
   });
@@ -161,18 +158,18 @@ async function fetchVehicles() {
     const vehicleId = v.vehicle?.vehicle?.id;
     if (!v.vehicle || !v.vehicle.position || !vehicleId) return;
 
-    let typeKey = "other";
     const routeId = v.vehicle?.trip?.route_id;
+    let typeKey = "out"; // assume out of service
+    let color = vehicleColors.out;
+
     if (routeId && routes[routeId]) {
       const r = routes[routeId];
-      switch (r.route_type) {
-        case 2: typeKey = "train"; break;
-        case 3: typeKey = "bus"; break;
-        case 4: typeKey = "ferry"; break;
-      }
-    } else if (v.vehicle.vehicle?.label.startsWith("AM")) {
-      typeKey = "bus";
+      if (r.route_type === 3) { typeKey = "bus"; color = vehicleColors[3]; }
+      else if (r.route_type === 2) { typeKey = "train"; color = vehicleColors[2]; }
+      else if (r.route_type === 4) { typeKey = "ferry"; color = vehicleColors[4]; }
     }
+
+    newVehicleIds.add(vehicleId);
 
     const lat = v.vehicle.position.latitude;
     const lon = v.vehicle.position.longitude;
@@ -184,25 +181,26 @@ async function fetchVehicles() {
     const speedKmh = v.vehicle.position.speed ? v.vehicle.position.speed * 3.6 : 0;
     const occupancy = occupancyStatus !== undefined ? occupancyLabels[occupancyStatus] || "Unknown" : "N/A";
 
+    // Bus type matching
     let busType = "";
-    let color = vehicleColors[typeKey] || vehicleColors.default;
-
     if (typeKey === "bus" && busTypes && Object.keys(busTypes).length > 0) {
       for (const model in busTypes) {
         const ops = busTypes[model];
         if (ops[operator]?.includes(vehicleNumber)) {
           busType = model;
-          color = vehicleColors[3];
           break;
         }
       }
     }
 
+    // Destination / headsign
     let destination = v.vehicle.trip?.trip_headsign || "N/A";
     const tripId = v.vehicle?.trip?.trip_id;
     if (tripId && trips[tripId]) destination = trips[tripId].trip_headsign || "N/A";
 
+    // Build popup
     const popupContent = `
+      <b>Status:</b> ${typeKey === "out" ? "Out of Service" : typeKey.toUpperCase()}<br>
       <b>Route:</b> ${routes[routeId]?.route_short_name || "N/A"}<br>
       <b>Destination:</b> ${destination}<br>
       <b>Vehicle:</b> ${vehicleLabel}<br>
@@ -212,6 +210,7 @@ async function fetchVehicles() {
       <b>Occupancy:</b> ${occupancy}
     `;
 
+    // Handle AM trains separately
     if (vehicleLabel.startsWith("AM")) {
       if (typeKey === "train") inServiceAM.push({ vehicleId, lat, lon, speedKmh, vehicleLabel });
       else outOfServiceAM.push({ vehicleId, lat, lon, speedKmh, vehicleLabel });
@@ -220,7 +219,7 @@ async function fetchVehicles() {
     addVehicleMarker(vehicleId, lat, lon, popupContent, color, typeKey);
   }));
 
-  // AM train pairing
+  // Pair AM trains
   pairAMTrains(inServiceAM, outOfServiceAM).forEach(pair => {
     const marker = vehicleMarkers[pair.inTrain.vehicleId];
     if (marker) {
@@ -229,6 +228,7 @@ async function fetchVehicles() {
     }
   });
 
+  // Remove stale
   Object.keys(vehicleMarkers).forEach(id => {
     if (!newVehicleIds.has(id)) {
       map.removeLayer(vehicleMarkers[id]);
@@ -237,12 +237,12 @@ async function fetchVehicles() {
   });
 
   debugBox.textContent = `Realtime update complete.`;
+  updateLayerVisibility();
   updateVehicleCount();
 }
 
 // --- Init ---
 async function init() {
-  // Load routes with attributes mapped properly
   const routesJson = await safeFetch(routesUrl);
   if (routesJson?.data) {
     routesJson.data.forEach(r => {
@@ -260,7 +260,7 @@ async function init() {
   if (busTypesJson) busTypes = busTypesJson;
 
   await fetchVehicles();
-  setInterval(fetchVehicles, 20000); // only runs if tab active
+  setInterval(fetchVehicles, 20000);
 }
 
 init();
