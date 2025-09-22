@@ -1,4 +1,4 @@
-// ================== v4.13 - Realtime Vehicle Tracking (Optimized API Calls, 20s refresh) ==================
+// ================== v4.14 - Realtime Vehicle Tracking ==================
 
 // --- API endpoints ---
 const proxyBaseUrl = "https://atrealtime.vercel.app";
@@ -8,46 +8,34 @@ const tripsUrl    = `${proxyBaseUrl}/api/trips`;
 const busTypesUrl = "https://raw.githubusercontent.com/dazzlingfields/ATrealtime/refs/heads/main/busTypes.json";
 
 // --- Map initialization ---
-// Base layers
 const light = L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", {
   attribution: "&copy; <a href='https://www.openstreetmap.org/'>OpenStreetMap</a> contributors &copy; <a href='https://carto.com/'>CARTO</a>",
-  subdomains: "abcd",
-  maxZoom: 20
+  subdomains: "abcd", maxZoom: 20
 });
-
 const dark = L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
   attribution: "&copy; <a href='https://www.openstreetmap.org/'>OpenStreetMap</a> contributors &copy; <a href='https://carto.com/'>CARTO</a>",
-  subdomains: "abcd",
-  maxZoom: 20
+  subdomains: "abcd", maxZoom: 20
 });
-
 const osm = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
   attribution: "&copy; OpenStreetMap contributors"
 });
-
 const satellite = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", {
   attribution: "Tiles © Esri"
 });
 
-// Map with light as default
-const map = L.map("map", {
-  center: [-36.8485, 174.7633],
-  zoom: 12,
-  layers: [light] // default
-});
+// Map setup
+const map = L.map("map", { center: [-36.8485, 174.7633], zoom: 12, layers: [light] });
+L.control.layers({ Light: light, Dark: dark, OpenStreetMap: osm, Satellite: satellite }).addTo(map);
 
-// Layer control
-const baseMaps = {
-  "Light": light,
-  "Dark": dark,
-  "OpenStreetMap": osm,
-  "Satellite": satellite
+// --- Vehicle layers ---
+const vehicleLayers = {
+  bus: L.layerGroup().addTo(map),
+  train: L.layerGroup().addTo(map),
+  ferry: L.layerGroup().addTo(map),
+  other: L.layerGroup().addTo(map)
 };
 
-L.control.layers(baseMaps).addTo(map);
-
-
-// --- Vehicle data structures ---
+// --- Data structures ---
 const vehicleMarkers = {};
 const inactiveMarkers = {};
 const trips = {};
@@ -65,16 +53,12 @@ const vehicleColors = {
 
 // --- Occupancy labels ---
 const occupancyLabels = {
-  EMPTY: "Empty",
-  MANY_SEATS_AVAILABLE: "Many Seats Available",
-  FEW_SEATS_AVAILABLE: "Few Seats Available",
-  STANDING_ROOM_ONLY: "Standing Room Only",
-  CRUSHED_STANDING_ROOM_ONLY: "Full",
-  FULL: "Full",
-  NOT_ACCEPTING_PASSENGERS: "Not accepting passengers"
+  EMPTY: "Empty", MANY_SEATS_AVAILABLE: "Many Seats", FEW_SEATS_AVAILABLE: "Few Seats",
+  STANDING_ROOM_ONLY: "Standing", CRUSHED_STANDING_ROOM_ONLY: "Full",
+  FULL: "Full", NOT_ACCEPTING_PASSENGERS: "Not accepting passengers"
 };
 
-// --- Safe fetch helper ---
+// --- Safe fetch ---
 async function safeFetch(url) {
   try {
     const res = await fetch(url);
@@ -87,64 +71,50 @@ async function safeFetch(url) {
   }
 }
 
-// --- Add marker to map ---
+// --- Marker management ---
 function addVehicleMarker(id, lat, lon, popupContent, color, type) {
   if (vehicleMarkers[id]) {
     vehicleMarkers[id].setLatLng([lat, lon]);
     vehicleMarkers[id].setPopupContent(popupContent);
   } else {
     const marker = L.circleMarker([lat, lon], {
-      radius: 6,
-      fillColor: color,
-      color: "#000",
-      weight: 1,
-      opacity: 1,
-      fillOpacity: 0.9
-    }).addTo(map);
-
+      radius: 6, fillColor: color, color: "#000",
+      weight: 1, opacity: 1, fillOpacity: 0.9
+    }).addTo(vehicleLayers[type] || vehicleLayers.other);
     marker.bindPopup(popupContent);
     vehicleMarkers[id] = marker;
   }
 }
 
-// --- Fetch all vehicles ---
+// --- Main fetch loop ---
 async function fetchVehicles() {
   const json = await safeFetch(realtimeUrl);
-  if (!json) {
-    debugBox.textContent = "Realtime data unavailable";
-    return;
-  }
+  if (!json) { debugBox.textContent = "Realtime data unavailable"; return; }
 
   const vehicles = json?.response?.entity || json?.entity || [];
   const newVehicleIds = new Set();
   const inServiceAM = [], outOfServiceAM = [];
   const missingTripIds = new Set();
 
-  // --- First pass: collect vehicles, missing trips
+  // Collect trips
   vehicles.forEach(v => {
     const vehicleId = v.vehicle?.vehicle?.id;
     if (!v.vehicle || !v.vehicle.position || !vehicleId) return;
-
     newVehicleIds.add(vehicleId);
     const tripId = v.vehicle?.trip?.trip_id;
-    if (tripId && !trips[tripId]) {
-      missingTripIds.add(tripId);
-    }
+    if (tripId && !trips[tripId]) missingTripIds.add(tripId);
   });
 
-  // --- Fetch all missing trips in one request
+  // Fetch missing trips
   if (missingTripIds.size > 0) {
     const ids = Array.from(missingTripIds).join(",");
     const tripJson = await safeFetch(`${tripsUrl}?ids=${ids}`);
     if (tripJson?.data) {
-      tripJson.data.forEach(t => {
-        const trip = t.attributes || t;
-        trips[t.id] = trip;
-      });
+      tripJson.data.forEach(t => { trips[t.id] = t.attributes || t; });
     }
   }
 
-  // --- Second pass: process vehicles
+  // Process vehicles
   await Promise.all(vehicles.map(async v => {
     const vehicleId = v.vehicle?.vehicle?.id;
     if (!v.vehicle || !v.vehicle.position || !vehicleId) return;
@@ -172,10 +142,10 @@ async function fetchVehicles() {
       }
       routeName = r.route_short_name || "N/A";
     } else if (vehicleLabel.startsWith("AM")) {
-      typeKey = "bus";
+      typeKey = "train"; color = vehicleColors[2];
     }
 
-    // Destination (trip headsign)
+    // Destination
     if (v.vehicle.trip?.trip_headsign) {
       destination = v.vehicle.trip.trip_headsign;
     } else if (tripId && trips[tripId]) {
@@ -187,25 +157,20 @@ async function fetchVehicles() {
       for (const model in busTypes) {
         const operators = busTypes[model];
         if (operators[operator]?.includes(vehicleNumber)) {
-          busType = model;
-          color = vehicleColors[3];
-          break;
+          busType = model; break;
         }
       }
     }
 
     // Speed limits
-    const maxSpeed = typeKey === "bus" ? 100 :
-                     typeKey === "train" ? 160 :
-                     typeKey === "ferry" ? 80 : 180;
+    const maxSpeed = typeKey === "bus" ? 100 : typeKey === "train" ? 160 : typeKey === "ferry" ? 80 : 180;
     const speed = speedKmh >= 0 && speedKmh <= maxSpeed ? speedKmh.toFixed(1) + " km/h" : "N/A";
 
     // Popup content
-    const displayVehicle = vehicleLabel;
     const popupContent = `
       <b>Route:</b> ${routeName}<br>
       <b>Destination:</b> ${destination}<br>
-      <b>Vehicle:</b> ${displayVehicle}<br>
+      <b>Vehicle:</b> ${vehicleLabel}<br>
       ${busType ? `<b>Bus Model:</b> ${busType}<br>` : ""}
       <b>Number Plate:</b> ${licensePlate}<br>
       <b>Speed:</b> ${speed}<br>
@@ -245,12 +210,11 @@ async function fetchVehicles() {
   updateVehicleCount();
 }
 
-// --- Vehicle count updater ---
+// --- Vehicle count ---
 function updateVehicleCount() {
   const busCount = Object.values(vehicleMarkers).filter(m => m.options.fillColor === vehicleColors[3]).length;
   const trainCount = Object.values(vehicleMarkers).filter(m => m.options.fillColor === vehicleColors[2]).length;
   const ferryCount = Object.values(vehicleMarkers).filter(m => m.options.fillColor === vehicleColors[4]).length;
-
   document.getElementById("vehicle-count").textContent =
     `Buses: ${busCount}, Trains: ${trainCount}, Ferries: ${ferryCount}`;
 }
@@ -267,22 +231,11 @@ function pairAMTrains(inService, outOfService) {
 
 // --- Init ---
 async function init() {
-  // Load routes + bustypes
   const routesJson = await safeFetch(routesUrl);
-  if (routesJson?.data) {
-    routesJson.data.forEach(r => { routes[r.id] = r; });
-  }
-
+  if (routesJson?.data) routesJson.data.forEach(r => { routes[r.id] = r; });
   const busTypesJson = await safeFetch(busTypesUrl);
   if (busTypesJson) busTypes = busTypesJson;
-
-  // First fetch
   await fetchVehicles();
-
-  // Refresh every 20s
   setInterval(fetchVehicles, 20000);
 }
-
 init();
-
-
