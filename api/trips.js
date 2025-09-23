@@ -1,17 +1,8 @@
-// trips.js - serverless proxy for AT GTFS trips with caching and batch support
-
-let cachedTrips = {}; // key = tripId, value = trip object
+// trips.js - serverless proxy for AT GTFS trips with caching + batch support
+let cachedTrips = {}; // key = tripId, value = full trip object
 
 export default async function handler(req, res) {
   try {
-    // --- Handle preflight CORS ---
-    if (req.method === "OPTIONS") {
-      res.setHeader("Access-Control-Allow-Origin", "*");
-      res.setHeader("Access-Control-Allow-Methods", "GET,OPTIONS");
-      res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-      return res.status(200).end();
-    }
-
     const { id, ids } = req.query;
 
     // Collect trip IDs
@@ -23,53 +14,54 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: "No trip id(s) specified" });
     }
 
-    // Which trips are missing in cache?
+    // Check which trips are missing in cache
     const missingIds = tripIds.filter(tid => !cachedTrips[tid]);
-    const fetchedTrips = [];
 
-    // Fetch missing trips one by one (AT API does not support multiple trip_ids in a single call)
-    for (const tid of missingIds) {
-      try {
-        const response = await fetch(
-          `https://api.at.govt.nz/gtfs/v3/trips/${tid}`,
-          {
-            headers: {
-              "Ocp-Apim-Subscription-Key": process.env.AT_API_KEY,
-            },
-          }
-        );
-
-        if (!response.ok) {
-          console.error(`Upstream error for ${tid}: ${response.status} ${response.statusText}`);
-          continue;
+    if (missingIds.length > 0) {
+      // Fetch missing trips in one API call
+      const response = await fetch(
+        `https://api.at.govt.nz/gtfs/v3/trips?trip_id=${missingIds.join(",")}`,
+        {
+          headers: {
+            "Ocp-Apim-Subscription-Key": process.env.AT_API_KEY,
+          },
         }
+      );
 
-        const data = await response.json();
-        if (data?.data?.attributes) {
-          const trip = data.data.attributes;
-          cachedTrips[tid] = trip;
-          fetchedTrips.push({ id: tid, attributes: trip });
-        }
-      } catch (err) {
-        console.error(`Failed to fetch trip ${tid}:`, err);
+      if (!response.ok) {
+        throw new Error(`Upstream error: ${response.status} ${response.statusText}`);
+      }
+
+      const data = await response.json();
+
+      if (data?.data) {
+        data.data.forEach(t => {
+          // Cache the full trip object (with attributes, id, etc.)
+          cachedTrips[t.id] = t;
+        });
       }
     }
 
-    // Prepare final response with cached + fetched
+    // Return all requested trips (from cache or just fetched)
     const result = {
-      data: tripIds.map(tid => ({
-        id: tid,
-        attributes: cachedTrips[tid] || null
-      }))
+      data: tripIds
+        .map(tid => cachedTrips[tid] || null)
+        .filter(Boolean) // remove nulls if some IDs aren’t found
     };
 
     // Add CORS headers
     res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "GET,OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+
+    if (req.method === "OPTIONS") {
+      return res.status(200).end();
+    }
+
     res.status(200).json(result);
 
   } catch (err) {
     console.error("trips.js error:", err);
-    res.setHeader("Access-Control-Allow-Origin", "*");
     res.status(500).json({ error: err.message });
   }
 }
