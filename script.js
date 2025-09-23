@@ -1,4 +1,4 @@
-// ================== v4.21d - Realtime Vehicle Tracking (AM pairing, occupancy, bus types, train line colours, trip cache, active headsigns) ==================
+// ================== v4.21e - Realtime Vehicle Tracking (AM pairing, occupancy, bus types, train line colours, trip cache, active headsigns fixed) ==================
 
 // --- API endpoints ---
 const proxyBaseUrl = "https://atrealtime.vercel.app";
@@ -53,7 +53,7 @@ const debugBox = document.getElementById("debug");
 const vehicleColors = {
   bus: "#4a90e2",
   train: "#d0021b",
-  ferry: "#1abc9c",   // changed from green to teal for better distinction
+  ferry: "#1abc9c",   // teal for distinction
   out: "#9b9b9b"
 };
 const trainLineColors = {
@@ -130,7 +130,7 @@ async function fetchTrip(tripId, routeId = null) {
       if (attrs) {
         tripCache[tripId] = {
           trip_id: attrs.trip_id,
-          trip_headsign: attrs.trip_headsign,
+          trip_headsign: attrs.trip_headsign || attrs.headsign || "N/A",
           route_id: attrs.route_id,
           bikes_allowed: attrs.bikes_allowed
         };
@@ -147,7 +147,7 @@ async function fetchTrip(tripId, routeId = null) {
       if (activeAttrs) {
         const result = {
           trip_id: activeAttrs.trip_id,
-          trip_headsign: activeAttrs.trip_headsign,
+          trip_headsign: activeAttrs.trip_headsign || activeAttrs.headsign || "N/A",
           route_id: activeAttrs.route_id,
           bikes_allowed: activeAttrs.bikes_allowed
         };
@@ -267,7 +267,11 @@ async function fetchVehicles() {
     // Trip info
     const tripId = v.vehicle?.trip?.trip_id;
     const tripData = await fetchTrip(tripId, routeId);
-    if (tripData?.trip_headsign) destination = tripData.trip_headsign;
+    if (tripData?.trip_headsign && tripData.trip_headsign !== "N/A") {
+      destination = tripData.trip_headsign;
+    } else if (routes[routeId]) {
+      destination = routes[routeId].route_long_name || routes[routeId].route_short_name || "N/A";
+    }
     if (tripData?.bikes_allowed !== undefined) {
       const bikeText = tripData.bikes_allowed === 2 ? "Yes" :
                        tripData.bikes_allowed === 1 ? "Some" : "No";
