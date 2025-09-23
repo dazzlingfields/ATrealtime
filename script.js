@@ -1,4 +1,4 @@
-// ================== v4.21 - Realtime Vehicle Tracking (AM pairing, occupancy, bus types, train line colours, trip cache) ==================
+// ================== v4.21c - Realtime Vehicle Tracking (AM pairing, occupancy, bus types, train line colours, trip cache, active headsigns) ==================
 
 // --- API endpoints ---
 const proxyBaseUrl = "https://atrealtime.vercel.app";
@@ -44,7 +44,7 @@ const vehicleLayers = {
 
 // --- Vehicle data structures ---
 const vehicleMarkers = {};
-const tripCache = {}; // per-trip cache for headsigns and bikes
+const tripCache = {};
 let routes = {};
 let busTypes = {};
 const debugBox = document.getElementById("debug");
@@ -52,7 +52,7 @@ const debugBox = document.getElementById("debug");
 // --- Colours ---
 const vehicleColors = {
   bus: "#4a90e2",
-  train: "#d0021b", // fallback if route_color not found
+  train: "#d0021b",
   ferry: "#7ed321",
   out: "#9b9b9b"
 };
@@ -87,22 +87,76 @@ async function safeFetch(url) {
   }
 }
 
-// --- Trip fetch with caching ---
-async function fetchTrip(tripId) {
-  if (!tripId) return null;
-  if (tripCache[tripId]) return tripCache[tripId];
+// --- Pick currently active trip from list ---
+function selectActiveTrip(trips) {
+  if (!trips?.length) return null;
 
-  const tripJson = await safeFetch(`${tripsUrl}/${tripId}`);
-  if (tripJson?.data?.attributes) {
-    const attrs = tripJson.data.attributes;
-    tripCache[tripId] = {
-      trip_id: attrs.trip_id,
-      trip_headsign: attrs.trip_headsign,
-      route_id: attrs.route_id,
-      bikes_allowed: attrs.bikes_allowed
-    };
-    return tripCache[tripId];
+  const now = new Date();
+  const today = now.toISOString().slice(0,10).replace(/-/g,""); // YYYYMMDD
+
+  let bestTrip = null;
+  let bestDelta = Infinity;
+
+  for (const t of trips) {
+    const attrs = t.attributes;
+    if (!attrs.start_time || !attrs.start_date) continue;
+
+    if (attrs.start_date !== today) continue; // ignore trips from other days
+
+    // Parse start_time (HH:MM:SS)
+    const [hh, mm, ss] = attrs.start_time.split(":").map(Number);
+    const tripStart = new Date(now);
+    tripStart.setHours(hh, mm, ss, 0);
+
+    const delta = Math.abs(now - tripStart);
+    if (delta < bestDelta) {
+      bestDelta = delta;
+      bestTrip = attrs;
+    }
   }
+
+  return bestTrip || trips[0].attributes; // fallback to first if none matched
+}
+
+// --- Trip fetch with caching ---
+async function fetchTrip(tripId, routeId = null) {
+  if (!tripId && !routeId) return null;
+
+  if (tripId && tripCache[tripId]) return tripCache[tripId];
+
+  // Try by trip_id
+  if (tripId) {
+    const tripJson = await safeFetch(`${tripsUrl}?trip_id=${tripId}`);
+    if (tripJson?.data?.length > 0) {
+      const attrs = tripJson.data[0].attributes;
+      tripCache[tripId] = {
+        trip_id: attrs.trip_id,
+        trip_headsign: attrs.trip_headsign,
+        route_id: attrs.route_id,
+        bikes_allowed: attrs.bikes_allowed
+      };
+      return tripCache[tripId];
+    }
+  }
+
+  // Fallback: by route_id
+  if (routeId) {
+    const tripJson = await safeFetch(`${tripsUrl}?route_id=${routeId}`);
+    if (tripJson?.data?.length > 0) {
+      const activeAttrs = selectActiveTrip(tripJson.data);
+      if (activeAttrs) {
+        const result = {
+          trip_id: activeAttrs.trip_id,
+          trip_headsign: activeAttrs.trip_headsign,
+          route_id: activeAttrs.route_id,
+          bikes_allowed: activeAttrs.bikes_allowed
+        };
+        if (activeAttrs.trip_id) tripCache[activeAttrs.trip_id] = result;
+        return result;
+      }
+    }
+  }
+
   return null;
 }
 
@@ -136,7 +190,7 @@ function pairAMTrains(inService, outOfService) {
       if (usedOut.has(o.vehicleId)) return;
       const dx = inTrain.lat - o.lat;
       const dy = inTrain.lon - o.lon;
-      const dist = Math.sqrt(dx * dx + dy * dy) * 111000; // rough meters
+      const dist = Math.sqrt(dx * dx + dy * dy) * 111000;
       if (dist <= 200 && Math.abs(inTrain.speedKmh - o.speedKmh) <= 15) {
         if (dist < bestDist) { bestDist = dist; bestMatch = o; }
       }
@@ -212,14 +266,12 @@ async function fetchVehicles() {
 
     // Trip info
     const tripId = v.vehicle?.trip?.trip_id;
-    if (tripId) {
-      const tripData = await fetchTrip(tripId);
-      if (tripData?.trip_headsign) destination = tripData.trip_headsign;
-      if (tripData?.bikes_allowed !== undefined) {
-        const bikeText = tripData.bikes_allowed === 2 ? "Yes" :
-                         tripData.bikes_allowed === 1 ? "Some" : "No";
-        destination += `<br><b>Bikes Allowed:</b> ${bikeText}`;
-      }
+    const tripData = await fetchTrip(tripId, routeId);
+    if (tripData?.trip_headsign) destination = tripData.trip_headsign;
+    if (tripData?.bikes_allowed !== undefined) {
+      const bikeText = tripData.bikes_allowed === 2 ? "Yes" :
+                       tripData.bikes_allowed === 1 ? "Some" : "No";
+      destination += `<br><b>Bikes Allowed:</b> ${bikeText}`;
     }
 
     // Bus type
