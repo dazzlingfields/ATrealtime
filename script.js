@@ -1,4 +1,4 @@
-// ================== v4.21c - Realtime Vehicle Tracking (AM pairing, occupancy, bus types, train line colours, trip cache, active headsigns) ==================
+// ================== v4.21d - Realtime Vehicle Tracking (AM pairing, occupancy, bus types, train line colours, trip cache, active headsigns) ==================
 
 // --- API endpoints ---
 const proxyBaseUrl = "https://atrealtime.vercel.app";
@@ -53,7 +53,7 @@ const debugBox = document.getElementById("debug");
 const vehicleColors = {
   bus: "#4a90e2",
   train: "#d0021b",
-  ferry: "#7ed321",
+  ferry: "#1abc9c",   // changed from green to teal for better distinction
   out: "#9b9b9b"
 };
 const trainLineColors = {
@@ -100,10 +100,8 @@ function selectActiveTrip(trips) {
   for (const t of trips) {
     const attrs = t.attributes;
     if (!attrs.start_time || !attrs.start_date) continue;
+    if (attrs.start_date !== today) continue;
 
-    if (attrs.start_date !== today) continue; // ignore trips from other days
-
-    // Parse start_time (HH:MM:SS)
     const [hh, mm, ss] = attrs.start_time.split(":").map(Number);
     const tripStart = new Date(now);
     tripStart.setHours(hh, mm, ss, 0);
@@ -115,7 +113,7 @@ function selectActiveTrip(trips) {
     }
   }
 
-  return bestTrip || trips[0].attributes; // fallback to first if none matched
+  return bestTrip || trips[0].attributes;
 }
 
 // --- Trip fetch with caching ---
@@ -124,18 +122,20 @@ async function fetchTrip(tripId, routeId = null) {
 
   if (tripId && tripCache[tripId]) return tripCache[tripId];
 
-  // Try by trip_id
+  // Corrected: fetch trip by ID using REST path
   if (tripId) {
-    const tripJson = await safeFetch(`${tripsUrl}?trip_id=${tripId}`);
-    if (tripJson?.data?.length > 0) {
-      const attrs = tripJson.data[0].attributes;
-      tripCache[tripId] = {
-        trip_id: attrs.trip_id,
-        trip_headsign: attrs.trip_headsign,
-        route_id: attrs.route_id,
-        bikes_allowed: attrs.bikes_allowed
-      };
-      return tripCache[tripId];
+    const tripJson = await safeFetch(`${tripsUrl}/${tripId}`);
+    if (tripJson?.data) {
+      const attrs = tripJson.data.attributes || tripJson.data[0]?.attributes;
+      if (attrs) {
+        tripCache[tripId] = {
+          trip_id: attrs.trip_id,
+          trip_headsign: attrs.trip_headsign,
+          route_id: attrs.route_id,
+          bikes_allowed: attrs.bikes_allowed
+        };
+        return tripCache[tripId];
+      }
     }
   }
 
