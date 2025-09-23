@@ -14,39 +14,39 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: "No trip id(s) specified" });
     }
 
-    // Check which trips are missing in cache
+    // Which trips are missing from cache?
     const missingIds = tripIds.filter(tid => !cachedTrips[tid]);
 
     if (missingIds.length > 0) {
-      // Fetch missing trips in one API call
-      const response = await fetch(
-        `https://api.at.govt.nz/gtfs/v3/trips?trip_id=${missingIds.join(",")}`,
-        {
-          headers: {
-            "Ocp-Apim-Subscription-Key": process.env.AT_API_KEY,
-          },
-        }
+      // Fetch missing trips in parallel
+      const responses = await Promise.all(
+        missingIds.map(tid =>
+          fetch(`https://api.at.govt.nz/gtfs/v3/trips/${tid}`, {
+            headers: {
+              "Ocp-Apim-Subscription-Key": process.env.AT_API_KEY,
+            },
+          }).then(r => ({ tid, res: r }))
+        )
       );
 
-      if (!response.ok) {
-        throw new Error(`Upstream error: ${response.status} ${response.statusText}`);
-      }
-
-      const data = await response.json();
-
-      if (data?.data) {
-        data.data.forEach(t => {
-          // Cache the full trip object (with attributes, id, etc.)
-          cachedTrips[t.id] = t;
-        });
+      for (const { tid, res: tripRes } of responses) {
+        if (!tripRes.ok) {
+          console.error(`Failed to fetch trip ${tid}: ${tripRes.status} ${tripRes.statusText}`);
+          continue;
+        }
+        const data = await tripRes.json();
+        if (data?.data) {
+          // Cache full trip object (id + attributes)
+          cachedTrips[tid] = data.data;
+        }
       }
     }
 
-    // Return all requested trips (from cache or just fetched)
+    // Prepare response: only include trips we actually have
     const result = {
       data: tripIds
         .map(tid => cachedTrips[tid] || null)
-        .filter(Boolean) // remove nulls if some IDs aren’t found
+        .filter(Boolean),
     };
 
     // Add CORS headers
