@@ -1,11 +1,11 @@
-// ================== v4.20 - Realtime Vehicle Tracking (Trip-by-ID + Reliable Headsign) ==================
+// ================== v4.21 - Realtime Vehicle Tracking (AM pairing, occupancy, bus types, train line colours, trip cache) ==================
 
 // --- API endpoints ---
 const proxyBaseUrl = "https://atrealtime.vercel.app";
-const realtimeUrl = `${proxyBaseUrl}/api/realtime`;
-const routesUrl   = `${proxyBaseUrl}/api/routes`;
-const tripsUrl    = `${proxyBaseUrl}/api/trips`;
-const busTypesUrl = "https://raw.githubusercontent.com/dazzlingfields/ATrealtime/refs/heads/main/busTypes.json";
+const realtimeUrl  = `${proxyBaseUrl}/api/realtime`;
+const routesUrl    = `${proxyBaseUrl}/api/routes`;
+const tripsUrl     = `${proxyBaseUrl}/api/trips`;
+const busTypesUrl  = "https://raw.githubusercontent.com/dazzlingfields/ATrealtime/refs/heads/main/busTypes.json";
 
 // --- Map initialization ---
 const light = L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", {
@@ -34,14 +34,6 @@ const map = L.map("map", {
 const baseMaps = { "Light": light, "Dark": dark, "OSM": osm, "Satellite": satellite };
 L.control.layers(baseMaps).addTo(map);
 
-// --- Vehicle data structures ---
-const vehicleMarkers = {};
-const trips = {};
-const tripCache = {}; // persistent cache for headsigns + bikes_allowed
-let routes = {};
-let busTypes = {};
-const debugBox = document.getElementById("debug");
-
 // --- Vehicle layers ---
 const vehicleLayers = {
   bus: L.layerGroup().addTo(map),
@@ -50,19 +42,28 @@ const vehicleLayers = {
   out: L.layerGroup().addTo(map)
 };
 
-// --- Vehicle colors & occupancy ---
+// --- Vehicle data structures ---
+const vehicleMarkers = {};
+const tripCache = {}; // per-trip cache for headsigns and bikes
+let routes = {};
+let busTypes = {};
+const debugBox = document.getElementById("debug");
+
+// --- Colours ---
 const vehicleColors = {
   bus: "#4a90e2",
-  train: "#d0021b",
+  train: "#d0021b", // fallback if route_color not found
   ferry: "#7ed321",
   out: "#9b9b9b"
 };
 const trainLineColors = {
-  STH: "#d0021b", // red
-  WEST: "#417505", // green
-  EAST: "#f8e71c", // yellow
-  ONE: "#4a90e2" // blue
+  STH: "#d0021b",
+  WEST: "#417505",
+  EAST: "#f8e71c",
+  ONE: "#4a90e2"
 };
+
+// --- Occupancy labels ---
 const occupancyLabels = [
   "Empty",
   "Many Seats Available",
@@ -72,13 +73,6 @@ const occupancyLabels = [
   "Full",
   "Not accepting passengers"
 ];
-
-// --- Visibility control ---
-let isTabActive = true;
-document.addEventListener("visibilitychange", () => {
-  isTabActive = document.visibilityState === "visible";
-  if (isTabActive) fetchVehicles();
-});
 
 // --- Safe fetch helper ---
 async function safeFetch(url) {
@@ -131,7 +125,7 @@ function addVehicleMarker(id, lat, lon, popupContent, color, type) {
   }
 }
 
-// --- AM pairing ---
+// --- AM train pairing ---
 function pairAMTrains(inService, outOfService) {
   const pairs = [];
   const usedOut = new Set();
@@ -140,9 +134,10 @@ function pairAMTrains(inService, outOfService) {
     let bestMatch = null, bestDist = Infinity;
     outOfService.forEach(o => {
       if (usedOut.has(o.vehicleId)) return;
-      const dLat = inTrain.lat - o.lat, dLon = inTrain.lon - o.lon;
-      const dist = Math.sqrt(dLat*dLat + dLon*dLon);
-      if (dist < 0.002 && Math.abs(inTrain.speedKmh - o.speedKmh) < 10) {
+      const dx = inTrain.lat - o.lat;
+      const dy = inTrain.lon - o.lon;
+      const dist = Math.sqrt(dx * dx + dy * dy) * 111000; // rough meters
+      if (dist <= 200 && Math.abs(inTrain.speedKmh - o.speedKmh) <= 15) {
         if (dist < bestDist) { bestDist = dist; bestMatch = o; }
       }
     });
@@ -157,28 +152,14 @@ function pairAMTrains(inService, outOfService) {
 // --- Update vehicle count ---
 function updateVehicleCount() {
   const busCount = Object.values(vehicleMarkers).filter(m => m.options.fillColor === vehicleColors.bus).length;
-  const trainCount = Object.values(vehicleMarkers).filter(m => m.options.fillColor === vehicleColors.train).length;
+  const trainCount = Object.values(vehicleMarkers).filter(m => m.options.fillColor !== vehicleColors.bus && m.options.fillColor !== vehicleColors.ferry && m.options.fillColor !== vehicleColors.out).length;
   const ferryCount = Object.values(vehicleMarkers).filter(m => m.options.fillColor === vehicleColors.ferry).length;
-  document.getElementById("vehicle-count").textContent = 
+  document.getElementById("vehicle-count").textContent =
     `Buses: ${busCount}, Trains: ${trainCount}, Ferries: ${ferryCount}`;
 }
 
-// --- Checkbox filter system ---
-const checkboxes = document.querySelectorAll("#filters input[type=checkbox]");
-function updateLayerVisibility() {
-  checkboxes.forEach(cb => {
-    const layer = vehicleLayers[cb.dataset.layer];
-    if (!layer) return;
-    if (cb.checked) map.addLayer(layer);
-    else map.removeLayer(layer);
-  });
-  if (!map.hasLayer(vehicleLayers.out)) map.addLayer(vehicleLayers.out);
-}
-checkboxes.forEach(cb => cb.addEventListener("change", updateLayerVisibility));
-
 // --- Fetch vehicles ---
 async function fetchVehicles() {
-  if (!isTabActive) return;
   const json = await safeFetch(realtimeUrl);
   if (!json) return;
 
@@ -194,20 +175,20 @@ async function fetchVehicles() {
     const lat = v.vehicle.position.latitude;
     const lon = v.vehicle.position.longitude;
     const vehicleLabel = v.vehicle.vehicle?.label || "N/A";
-    const operator = v.vehicle.vehicle?.operator_id || vehicleLabel.slice(0,2);
+    const operator = v.vehicle.vehicle?.operator_id || vehicleLabel.slice(0, 2);
     const vehicleNumber = Number(vehicleLabel) || Number(vehicleLabel.slice(2)) || 0;
     const licensePlate = v.vehicle.vehicle?.license_plate || "N/A";
     const speedKmh = v.vehicle.position.speed ? v.vehicle.position.speed * 3.6 : 0;
 
-    const occupancyIndex = v.vehicle.occupancy_status;
-    const occupancy = (occupancyIndex !== undefined && occupancyIndex >= 0 && occupancyIndex <= 6)
-      ? occupancyLabels[occupancyIndex]
+    const occIdx = v.vehicle.occupancy_status;
+    const occupancy = (occIdx !== undefined && occIdx >= 0 && occIdx <= 6)
+      ? occupancyLabels[occIdx]
       : "N/A";
 
-    // Classification
     let typeKey = "out", color = vehicleColors.out;
     let routeName = "Out of Service", destination = "N/A";
     const routeId = v.vehicle?.trip?.route_id;
+
     if (routeId && routes[routeId]) {
       const r = routes[routeId];
       routeName = r.route_short_name || r.route_long_name || "N/A";
@@ -217,7 +198,9 @@ async function fetchVehicles() {
         case 4: typeKey = "ferry"; break;
       }
       if (typeKey === "train") {
-        if (routeName.includes("STH")) color = trainLineColors.STH;
+        if (r.route_color) {
+          color = `#${r.route_color}`;
+        } else if (routeName.includes("STH")) color = trainLineColors.STH;
         else if (routeName.includes("WEST")) color = trainLineColors.WEST;
         else if (routeName.includes("EAST")) color = trainLineColors.EAST;
         else if (routeName.includes("ONE")) color = trainLineColors.ONE;
@@ -227,7 +210,7 @@ async function fetchVehicles() {
       }
     }
 
-    // Trip data (headsign + bikes)
+    // Trip info
     const tripId = v.vehicle?.trip?.trip_id;
     if (tripId) {
       const tripData = await fetchTrip(tripId);
@@ -270,17 +253,16 @@ async function fetchVehicles() {
     addVehicleMarker(vehicleId, lat, lon, popupContent, color, typeKey);
   }));
 
-  // Pair AM trains
+  // AM train pairing
   pairAMTrains(inServiceAM, outOfServiceAM).forEach(pair => {
     const marker = vehicleMarkers[pair.inTrain.vehicleId];
     if (marker) {
       const oldContent = marker.getPopup()?.getContent() || "";
       marker.getPopup().setContent(oldContent + `<br><b>Paired to:</b> ${pair.outTrain.vehicleLabel} (6-car)`);
-      const outMarker = vehicleMarkers[pair.outTrain.vehicleId];
-      if (outMarker) outMarker.setStyle({ fillColor: marker.options.fillColor });
     }
   });
 
+  // Remove stale markers
   Object.keys(vehicleMarkers).forEach(id => {
     if (!newVehicleIds.has(id)) {
       map.removeLayer(vehicleMarkers[id]);
@@ -302,6 +284,7 @@ async function init() {
         route_type: attrs.route_type,
         route_short_name: attrs.route_short_name,
         route_long_name: attrs.route_long_name,
+        route_color: attrs.route_color,
         agency_id: attrs.agency_id
       };
     });
