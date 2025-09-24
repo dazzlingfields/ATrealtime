@@ -1,6 +1,6 @@
-// ================== v4.31 - Realtime Vehicle Tracking ==================
+// ================== v4.32 - Realtime Vehicle Tracking ==================
 // Features: fast load, AM pairing, bus types, AT-specific occupancy, bikes allowed,
-// persistent caching, headsign fallback + backfill, selectable basemaps
+// persistent caching, headsign fallback + backfill, selectable basemaps, stable speed
 
 // --- API endpoints ---
 const proxyBaseUrl = "https://atrealtime.vercel.app";
@@ -183,7 +183,37 @@ async function fetchVehicles() {
     const operator = v.vehicle.vehicle?.operator_id || vehicleLabel.slice(0, 2);
     const vehicleNumber = Number(vehicleLabel) || Number(vehicleLabel.slice(2)) || 0;
     const licensePlate = v.vehicle.vehicle?.license_plate || "N/A";
-    const speedKmh = v.vehicle.position.speed ? v.vehicle.position.speed * 3.6 : 0;
+
+    // --- Speed calculation (stabilised) ---
+    let speedKmh = 0;
+    if (v.vehicle.position.speed !== undefined) {
+      speedKmh = v.vehicle.position.speed * 3.6; // API m/s → km/h
+    }
+
+    const nowTs = Date.now();
+    const last = vehicleMarkers[vehicleId]?.lastPos;
+    if ((!speedKmh || speedKmh < 0 || speedKmh > 200) && last) {
+      const dx = lat - last.lat;
+      const dy = lon - last.lon;
+      const distKm = Math.sqrt(dx * dx + dy * dy) * 111; // rough haversine km
+      const dtH = (nowTs - last.ts) / 3600000; // ms → h
+      if (dtH > 0) speedKmh = distKm / dtH;
+    }
+
+    let typeKey = "out", color = vehicleColors.out;
+    if (vehicleMarkers[vehicleId]?.lastSpeed !== undefined) {
+      const lastSpeed = vehicleMarkers[vehicleId].lastSpeed;
+      if (Math.abs(speedKmh - lastSpeed) > 40) {
+        speedKmh = lastSpeed; // ignore spikes
+      }
+    }
+
+    if (typeKey === "bus" && speedKmh > 100) speedKmh = 0;
+    if (typeKey === "train" && speedKmh > 140) speedKmh = 0;
+
+    if (!vehicleMarkers[vehicleId]) vehicleMarkers[vehicleId] = {};
+    vehicleMarkers[vehicleId].lastSpeed = speedKmh;
+    vehicleMarkers[vehicleId].lastPos = { lat, lon, ts: nowTs };
 
     // --- Occupancy (AT-specific) ---
     let occupancy = "N/A";
@@ -195,7 +225,6 @@ async function fetchVehicles() {
       if (occIdx >= 0 && occIdx <= 6) occupancy = occupancyLabels[occIdx];
     }
 
-    let typeKey = "out", color = vehicleColors.out;
     let routeName = "Out of Service", destination = "Unknown";
     const routeId = v.vehicle?.trip?.route_id;
     if (routeId && routes[routeId]) {
@@ -212,7 +241,7 @@ async function fetchVehicles() {
     const tripId = v.vehicle?.trip?.trip_id;
     if (tripId) allTripIds.push(tripId);
 
-    // Destination (cached headsign or fallback route)
+    // Destination
     if (tripId && tripCache[tripId]?.trip_headsign) {
       destination = tripCache[tripId].trip_headsign;
     } else if (routes[routeId]) {
@@ -251,7 +280,7 @@ async function fetchVehicles() {
     }
 
     addVehicleMarker(vehicleId, lat, lon, popupContent, color, typeKey, tripId);
-    cachedState.push({ vehicleId, lat, lon, popupContent, color, typeKey, tripId, ts: Date.now() });
+    cachedState.push({ vehicleId, lat, lon, popupContent, color, typeKey, tripId, ts: nowTs });
   });
 
   // AM pairing
@@ -284,7 +313,6 @@ async function fetchVehicles() {
     const tripData = tripCache[marker.tripId];
     if (tripData?.trip_headsign) {
       const old = marker.getPopup().getContent();
-      // Replace fallback "Destination" with actual headsign
       if (old.includes("Destination:</b>") && !old.includes(tripData.trip_headsign)) {
         marker.setPopupContent(old.replace(/Destination:<\/b> .*?<br>/, `Destination:</b> ${tripData.trip_headsign}<br>`));
       }
@@ -319,3 +347,4 @@ async function init() {
   setInterval(fetchVehicles, 15000);
 }
 init();
+
