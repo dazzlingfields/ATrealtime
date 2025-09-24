@@ -83,7 +83,7 @@ function addVehicleMarker(id, lat, lon, popupContent, color, type, tripId) {
       radius: 6, fillColor: color, color: "#000",
       weight: 1, opacity: 1, fillOpacity: 0.9
     }).addTo(vehicleLayers[type] || vehicleLayers.out);
-    marker.bindPopup(popupContent, { maxWidth: 300 });
+    marker.bindPopup(popupContent, { maxWidth: 250 });
     marker.tripId = tripId;
     vehicleMarkers[id] = marker;
   }
