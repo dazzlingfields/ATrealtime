@@ -1,4 +1,4 @@
-// ================== v4.28 - Realtime Vehicle Tracking (instant headsign from cache + backfill) ==================
+// ================== v4.30 - Realtime Vehicle Tracking (AT occupancy fix, fast load, AM pairing, bus types, bikes allowed, headsign cache) ==================
 
 // --- API endpoints ---
 const proxyBaseUrl = "https://atrealtime.vercel.app";
@@ -182,8 +182,16 @@ async function fetchVehicles() {
     const vehicleNumber = Number(vehicleLabel) || Number(vehicleLabel.slice(2)) || 0;
     const licensePlate = v.vehicle.vehicle?.license_plate || "N/A";
     const speedKmh = v.vehicle.position.speed ? v.vehicle.position.speed * 3.6 : 0;
-    const occIdx = v.vehicle.occupancy_status;
-    const occupancy = (occIdx !== undefined && occIdx >= 0 && occIdx <= 6) ? occupancyLabels[occIdx] : "N/A";
+
+    // --- Occupancy (AT-specific) ---
+    let occupancy = "N/A";
+    if (v.vehicle.occupancy_status !== undefined) {
+      const occIdx = v.vehicle.occupancy_status;
+      if (occIdx >= 0 && occIdx <= 6) occupancy = occupancyLabels[occIdx];
+    } else if (v.trip_update?.occupancy_status !== undefined) {
+      const occIdx = v.trip_update.occupancy_status;
+      if (occIdx >= 0 && occIdx <= 6) occupancy = occupancyLabels[occIdx];
+    }
 
     let typeKey = "out", color = vehicleColors.out;
     let routeName = "Out of Service", destination = "N/A";
@@ -202,7 +210,7 @@ async function fetchVehicles() {
     const tripId = v.vehicle?.trip?.trip_id;
     if (tripId) allTripIds.push(tripId);
 
-    // Instant destination if cached
+    // Destination (instant if cached)
     if (tripId && tripCache[tripId]?.trip_headsign) {
       destination = tripCache[tripId].trip_headsign;
     }
@@ -265,7 +273,7 @@ async function fetchVehicles() {
   debugBox.textContent = `Realtime update complete at ${new Date().toLocaleTimeString()}`;
   updateVehicleCount();
 
-  // Backfill trips async (for new trips not in cache)
+  // Backfill trips async
   await fetchTripsBatch([...new Set(allTripIds)]);
   Object.values(vehicleMarkers).forEach(marker => {
     if (!marker.tripId) return;
