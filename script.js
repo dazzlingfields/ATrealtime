@@ -1,10 +1,10 @@
-// ================== v4.22b - Realtime Vehicle Tracking (AM pairing, occupancy, bus types, train line colours, trip cache, batch trip fetching, selectable basemaps) ==================
+// ================== v4.22d - Realtime Vehicle Tracking (AM pairing, occupancy, bus types, train line colours, trip cache, batch trip fetching, overlays, popup max width, smarter bikes allowed) ==================
 
 // --- API endpoints ---
 const proxyBaseUrl = "https://atrealtime.vercel.app";
 const realtimeUrl  = `${proxyBaseUrl}/api/realtime`;
 const routesUrl    = `${proxyBaseUrl}/api/routes`;
-const tripsUrl     = `${proxyBaseUrl}/api/trips`;   // proxy, supports ?ids=...
+const tripsUrl     = `${proxyBaseUrl}/api/trips`;
 const busTypesUrl  = "https://raw.githubusercontent.com/dazzlingfields/ATrealtime/refs/heads/main/busTypes.json";
 
 // --- Map initialization ---
@@ -32,7 +32,6 @@ const map = L.map("map", {
   zoomControl: false
 });
 const baseMaps = { "Light": light, "Dark": dark, "OSM": osm, "Satellite": satellite };
-L.control.layers(baseMaps).addTo(map);
 
 // --- Vehicle layers ---
 const vehicleLayers = {
@@ -41,6 +40,15 @@ const vehicleLayers = {
   ferry: L.layerGroup().addTo(map),
   out: L.layerGroup().addTo(map)
 };
+
+// Add overlay controls for toggling visibility
+const overlayMaps = {
+  "Buses": vehicleLayers.bus,
+  "Trains": vehicleLayers.train,
+  "Ferries": vehicleLayers.ferry,
+  "Out of Service": vehicleLayers.out
+};
+L.control.layers(baseMaps, overlayMaps).addTo(map);
 
 // --- Vehicle data structures ---
 const vehicleMarkers = {};
@@ -53,7 +61,7 @@ const debugBox = document.getElementById("debug");
 const vehicleColors = {
   bus: "#4a90e2",
   train: "#d0021b",
-  ferry: "#1abc9c",   // teal for distinction
+  ferry: "#1abc9c",
   out: "#9b9b9b"
 };
 const trainLineColors = {
@@ -90,10 +98,8 @@ async function safeFetch(url) {
 // --- Pick currently active trip from list ---
 function selectActiveTrip(trips) {
   if (!trips?.length) return null;
-
   const now = new Date();
-  const today = now.toISOString().slice(0,10).replace(/-/g,""); // YYYYMMDD
-
+  const today = now.toISOString().slice(0,10).replace(/-/g,"");
   let bestTrip = null;
   let bestDelta = Infinity;
 
@@ -151,7 +157,7 @@ function addVehicleMarker(id, lat, lon, popupContent, color, type) {
       opacity: 1,
       fillOpacity: 0.9
     }).addTo(vehicleLayers[type] || vehicleLayers.out);
-    marker.bindPopup(popupContent);
+    marker.bindPopup(popupContent, { maxWidth: 300 });
     vehicleMarkers[id] = marker;
   }
 }
@@ -198,13 +204,13 @@ async function fetchVehicles() {
   const newVehicleIds = new Set();
   const inServiceAM = [], outOfServiceAM = [];
 
-  // --- Collect all unique tripIds first ---
+  // Collect unique tripIds for batch fetch
   const allTripIds = [];
   vehicles.forEach(v => {
     const tripId = v.vehicle?.trip?.trip_id;
     if (tripId) allTripIds.push(tripId);
   });
-  await fetchTripsBatch([...new Set(allTripIds)]); // fetch missing trips in one call
+  await fetchTripsBatch([...new Set(allTripIds)]);
 
   await Promise.all(vehicles.map(async v => {
     const vehicleId = v.vehicle?.vehicle?.id;
@@ -249,7 +255,7 @@ async function fetchVehicles() {
       }
     }
 
-    // Trip info (already fetched in batch)
+    // Trip info
     const tripId = v.vehicle?.trip?.trip_id;
     let tripData = tripId ? tripCache[tripId] : null;
 
@@ -259,10 +265,19 @@ async function fetchVehicles() {
       destination = routes[routeId].route_long_name || routes[routeId].route_short_name || "N/A";
     }
 
+    // Bikes allowed logic (smarter per vehicle type)
+    let bikesLine = "";
     if (tripData?.bikes_allowed !== undefined) {
-      const bikeText = tripData.bikes_allowed === 2 ? "Yes" :
-                       tripData.bikes_allowed === 1 ? "Some" : "No";
-      destination += `<br><b>Bikes Allowed:</b> ${bikeText}`;
+      if (typeKey === "bus" && tripData.bikes_allowed === 2) {
+        bikesLine = `<br><b>Bikes Allowed:</b> Yes`;
+      }
+      if (typeKey === "train") {
+        if (tripData.bikes_allowed === 2) {
+          bikesLine = `<br><b>Bikes Allowed:</b> Yes`;
+        } else if (tripData.bikes_allowed === 1) {
+          bikesLine = `<br><b>Bikes Allowed:</b> Some`;
+        }
+      }
     }
 
     // Bus type
@@ -286,6 +301,7 @@ async function fetchVehicles() {
       <b>Number Plate:</b> ${licensePlate}<br>
       <b>Speed:</b> ${(speedKmh >= 0 && speedKmh <= 180 ? speedKmh.toFixed(1) : "N/A")} km/h<br>
       <b>Occupancy:</b> ${occupancy}
+      ${bikesLine}
     `;
 
     if (vehicleLabel.startsWith("AM")) {
