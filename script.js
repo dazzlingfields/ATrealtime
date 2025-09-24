@@ -51,9 +51,13 @@ let routes = {};
 let busTypes = {};
 const debugBox = document.getElementById("debug");
 
-// --- Colours ---
 const vehicleColors = { bus: "#4a90e2", train: "#d0021b", ferry: "#1abc9c", out: "#9b9b9b" };
-const trainLineColors = { STH: "#d0021b", WEST: "#417505", EAST: "#f8e71c", ONE: "#4a90e2" };
+const trainLineColors = { 
+  STH: "#d0021b",       // Southern: red
+  WEST: "#6aa84f",      // Western: lighter green
+  EAST: "#f8e71c",      // Eastern: yellow
+  ONE: "#0e76a8"        // Onehunga: teal-blue, distinct from bus blue
+};
 
 // --- Occupancy labels ---
 const occupancyLabels = [
@@ -354,3 +358,4 @@ async function init() {
   setInterval(fetchVehicles, 15000);
 }
 init();
+
