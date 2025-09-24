@@ -1,4 +1,4 @@
-// ================== v4.26 - Realtime Vehicle Tracking (fast load, cache restore, AM pairing, bus types, bikes allowed) ==================
+// ================== v4.28 - Realtime Vehicle Tracking (instant headsign from cache + backfill) ==================
 
 // --- API endpoints ---
 const proxyBaseUrl = "https://atrealtime.vercel.app";
@@ -9,12 +9,10 @@ const busTypesUrl  = "https://raw.githubusercontent.com/dazzlingfields/ATrealtim
 
 // --- Map initialization ---
 const light = L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", {
-  attribution: "&copy; OpenStreetMap contributors &copy; CARTO",
-  subdomains: "abcd", maxZoom: 20
+  attribution: "&copy; OpenStreetMap contributors &copy; CARTO", subdomains: "abcd", maxZoom: 20
 });
 const dark = L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
-  attribution: "&copy; OpenStreetMap contributors &copy; CARTO",
-  subdomains: "abcd", maxZoom: 20
+  attribution: "&copy; OpenStreetMap contributors &copy; CARTO", subdomains: "abcd", maxZoom: 20
 });
 const osm = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
   attribution: "&copy; OpenStreetMap contributors"
@@ -24,8 +22,7 @@ const satellite = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/servi
 });
 
 const map = L.map("map", {
-  center: [-36.8485, 174.7633],
-  zoom: 12, layers: [light], zoomControl: false
+  center: [-36.8485, 174.7633], zoom: 12, layers: [light], zoomControl: false
 });
 const baseMaps = { "Light": light, "Dark": dark, "OSM": osm, "Satellite": satellite };
 
@@ -51,12 +48,8 @@ let busTypes = {};
 const debugBox = document.getElementById("debug");
 
 // --- Colours ---
-const vehicleColors = {
-  bus: "#4a90e2", train: "#d0021b", ferry: "#1abc9c", out: "#9b9b9b"
-};
-const trainLineColors = {
-  STH: "#d0021b", WEST: "#417505", EAST: "#f8e71c", ONE: "#4a90e2"
-};
+const vehicleColors = { bus: "#4a90e2", train: "#d0021b", ferry: "#1abc9c", out: "#9b9b9b" };
+const trainLineColors = { STH: "#d0021b", WEST: "#417505", EAST: "#f8e71c", ONE: "#4a90e2" };
 
 // --- Occupancy labels ---
 const occupancyLabels = [
@@ -77,17 +70,19 @@ async function safeFetch(url) {
   }
 }
 
-function addVehicleMarker(id, lat, lon, popupContent, color, type) {
+function addVehicleMarker(id, lat, lon, popupContent, color, type, tripId) {
   if (vehicleMarkers[id]) {
     vehicleMarkers[id].setLatLng([lat, lon]);
     vehicleMarkers[id].setPopupContent(popupContent);
     vehicleMarkers[id].setStyle({ fillColor: color });
+    vehicleMarkers[id].tripId = tripId;
   } else {
     const marker = L.circleMarker([lat, lon], {
       radius: 6, fillColor: color, color: "#000",
       weight: 1, opacity: 1, fillOpacity: 0.9
     }).addTo(vehicleLayers[type] || vehicleLayers.out);
     marker.bindPopup(popupContent, { maxWidth: 300 });
+    marker.tripId = tripId;
     vehicleMarkers[id] = marker;
   }
 }
@@ -159,7 +154,7 @@ function pairAMTrains(inService, outOfService) {
 function renderFromCache(cachedVehicles) {
   if (!cachedVehicles) return;
   cachedVehicles.forEach(v => {
-    addVehicleMarker(v.vehicleId, v.lat, v.lon, v.popupContent, v.color, v.typeKey);
+    addVehicleMarker(v.vehicleId, v.lat, v.lon, v.popupContent, v.color, v.typeKey, v.tripId);
   });
   debugBox.textContent = `Showing cached data (last update: ${new Date(cachedVehicles[0]?.ts || Date.now()).toLocaleTimeString()})`;
   updateVehicleCount();
@@ -207,6 +202,11 @@ async function fetchVehicles() {
     const tripId = v.vehicle?.trip?.trip_id;
     if (tripId) allTripIds.push(tripId);
 
+    // Instant destination if cached
+    if (tripId && tripCache[tripId]?.trip_headsign) {
+      destination = tripCache[tripId].trip_headsign;
+    }
+
     // Bikes allowed
     let bikesLine = "";
     const tripData = tripId ? tripCache[tripId] : null;
@@ -238,8 +238,8 @@ async function fetchVehicles() {
       else outOfServiceAM.push({ vehicleId, lat, lon, speedKmh, vehicleLabel });
     }
 
-    addVehicleMarker(vehicleId, lat, lon, popupContent, color, typeKey);
-    cachedState.push({ vehicleId, lat, lon, popupContent, color, typeKey, ts: Date.now() });
+    addVehicleMarker(vehicleId, lat, lon, popupContent, color, typeKey, tripId);
+    cachedState.push({ vehicleId, lat, lon, popupContent, color, typeKey, tripId, ts: Date.now() });
   });
 
   // AM pairing
@@ -265,20 +265,15 @@ async function fetchVehicles() {
   debugBox.textContent = `Realtime update complete at ${new Date().toLocaleTimeString()}`;
   updateVehicleCount();
 
-  // Backfill trips async
+  // Backfill trips async (for new trips not in cache)
   await fetchTripsBatch([...new Set(allTripIds)]);
-  Object.keys(vehicleMarkers).forEach(id => {
-    const marker = vehicleMarkers[id];
-    if (!marker) return;
-    const tripId = allTripIds.find(t => tripCache[t]?.trip_id && t.includes(id)) || null;
-    if (tripId && tripCache[tripId]) {
-      const tripData = tripCache[tripId];
-      if (tripData.trip_headsign && tripData.trip_headsign !== "N/A") {
-        const dest = tripData.trip_headsign;
-        const old = marker.getPopup().getContent();
-        if (old.includes("Destination:</b> N/A")) {
-          marker.setPopupContent(old.replace("Destination:</b> N/A", `Destination:</b> ${dest}`));
-        }
+  Object.values(vehicleMarkers).forEach(marker => {
+    if (!marker.tripId) return;
+    const tripData = tripCache[marker.tripId];
+    if (tripData?.trip_headsign && tripData.trip_headsign !== "N/A") {
+      const old = marker.getPopup().getContent();
+      if (old.includes("Destination:</b> N/A")) {
+        marker.setPopupContent(old.replace("Destination:</b> N/A", `Destination:</b> ${tripData.trip_headsign}`));
       }
     }
   });
