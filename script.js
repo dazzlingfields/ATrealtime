@@ -1,6 +1,5 @@
-// ================== v4.33 - Realtime Vehicle Tracking ==================
-// Features: fast load, AM pairing, bus types, AT-specific occupancy, bikes allowed,
-// persistent caching, headsign fallback + backfill, selectable basemaps, raw speed
+// ================== v4.36 - Realtime Vehicle Tracking ==================
+// Fix: Convert AM + trains + ferries from m/s to km/h, add knots for ferries
 
 // --- API endpoints ---
 const proxyBaseUrl = "https://atrealtime.vercel.app";
@@ -89,14 +88,14 @@ function addVehicleMarker(id, lat, lon, popupContent, color, type, tripId) {
   }
 }
 
-function buildPopup(routeName, destination, vehicleLabel, busType, licensePlate, speedRaw, occupancy, bikesLine) {
+function buildPopup(routeName, destination, vehicleLabel, busType, licensePlate, speedStr, occupancy, bikesLine) {
   return `
     <b>Route:</b> ${routeName}<br>
     <b>Destination:</b> ${destination}<br>
     <b>Vehicle:</b> ${vehicleLabel}<br>
     ${busType ? `<b>Bus Model:</b> ${busType}<br>` : ""}
     <b>Number Plate:</b> ${licensePlate}<br>
-    <b>Speed (raw):</b> ${speedRaw !== null ? speedRaw.toFixed(2) : "N/A"}<br>
+    <b>Speed:</b> ${speedStr}<br>
     <b>Occupancy:</b> ${occupancy}
     ${bikesLine}
   `;
@@ -140,7 +139,7 @@ function pairAMTrains(inService, outOfService) {
       const dx = inTrain.lat - o.lat;
       const dy = inTrain.lon - o.lon;
       const dist = Math.sqrt(dx * dx + dy * dy) * 111000;
-      if (dist <= 200 && Math.abs(inTrain.speedRaw - o.speedRaw) <= 15) {
+      if (dist <= 200 && Math.abs(inTrain.speedKmh - o.speedKmh) <= 15) {
         if (dist < bestDist) { bestDist = dist; bestMatch = o; }
       }
     });
@@ -184,8 +183,29 @@ async function fetchVehicles() {
     const vehicleNumber = Number(vehicleLabel) || Number(vehicleLabel.slice(2)) || 0;
     const licensePlate = v.vehicle.vehicle?.license_plate || "N/A";
 
-    // --- Raw speed directly from feed ---
-    const speedRaw = (v.vehicle.position.speed !== undefined) ? v.vehicle.position.speed : null;
+    // --- Speed fix ---
+    let speedKmh = null;
+    let speedStr = "N/A";
+    if (v.vehicle.position.speed !== undefined) {
+      const routeId = v.vehicle?.trip?.route_id;
+      const routeType = routes[routeId]?.route_type;
+      const isTrain = (routeType === 2);
+      const isFerry = (routeType === 4);
+      const isAM = vehicleLabel.startsWith("AM");
+
+      if (isTrain || isFerry || isAM) {
+        speedKmh = v.vehicle.position.speed * 3.6; // m/s → km/h
+      } else {
+        speedKmh = v.vehicle.position.speed;       // already km/h
+      }
+
+      if (isFerry && speedKmh !== null) {
+        const speedKnots = v.vehicle.position.speed * 1.94384; // m/s → knots
+        speedStr = `${speedKmh.toFixed(1)} km/h (${speedKnots.toFixed(1)} kn)`;
+      } else {
+        speedStr = `${speedKmh.toFixed(1)} km/h`;
+      }
+    }
 
     // --- Occupancy (AT-specific) ---
     let occupancy = "N/A";
@@ -245,11 +265,11 @@ async function fetchVehicles() {
       }
     }
 
-    const popupContent = buildPopup(routeName, destination, vehicleLabel, busType, licensePlate, speedRaw, occupancy, bikesLine);
+    const popupContent = buildPopup(routeName, destination, vehicleLabel, busType, licensePlate, speedStr, occupancy, bikesLine);
 
     if (vehicleLabel.startsWith("AM")) {
-      if (typeKey === "train") inServiceAM.push({ vehicleId, lat, lon, speedRaw, vehicleLabel, color });
-      else outOfServiceAM.push({ vehicleId, lat, lon, speedRaw, vehicleLabel });
+      if (typeKey === "train") inServiceAM.push({ vehicleId, lat, lon, speedKmh, vehicleLabel, color });
+      else outOfServiceAM.push({ vehicleId, lat, lon, speedKmh, vehicleLabel });
     }
 
     addVehicleMarker(vehicleId, lat, lon, popupContent, color, typeKey, tripId);
