@@ -1,4 +1,4 @@
-// ================== v4.22e - Realtime Vehicle Tracking (AM pairing route colour, smoother updates, 15s refresh) ==================
+// ================== v4.23 - Realtime Vehicle Tracking (AM pairing route colour, smoother updates, 15s refresh, local cache restore) ==================
 
 // --- API endpoints ---
 const proxyBaseUrl = "https://atrealtime.vercel.app";
@@ -41,7 +41,7 @@ const vehicleLayers = {
   out: L.layerGroup().addTo(map)
 };
 
-// Overlays for toggle
+// Overlays
 const overlayMaps = {
   "Buses": vehicleLayers.bus,
   "Trains": vehicleLayers.train,
@@ -95,50 +95,9 @@ async function safeFetch(url) {
   }
 }
 
-// --- Pick currently active trip ---
-function selectActiveTrip(trips) {
-  if (!trips?.length) return null;
-  const now = new Date();
-  const today = now.toISOString().slice(0,10).replace(/-/g,"");
-  let bestTrip = null, bestDelta = Infinity;
-
-  for (const t of trips) {
-    const attrs = t.attributes;
-    if (!attrs.start_time || !attrs.start_date) continue;
-    if (attrs.start_date !== today) continue;
-    const [hh, mm, ss] = attrs.start_time.split(":").map(Number);
-    const tripStart = new Date(now);
-    tripStart.setHours(hh, mm, ss, 0);
-    const delta = Math.abs(now - tripStart);
-    if (delta < bestDelta) { bestDelta = delta; bestTrip = attrs; }
-  }
-  return bestTrip || trips[0].attributes;
-}
-
-// --- Batch fetch trips ---
-async function fetchTripsBatch(tripIds) {
-  const idsToFetch = tripIds.filter(tid => tid && !tripCache[tid]);
-  if (idsToFetch.length === 0) return;
-  const tripJson = await safeFetch(`${tripsUrl}?ids=${idsToFetch.join(",")}`);
-  if (tripJson?.data?.length > 0) {
-    tripJson.data.forEach(t => {
-      const attrs = t.attributes;
-      if (attrs) {
-        tripCache[attrs.trip_id] = {
-          trip_id: attrs.trip_id,
-          trip_headsign: attrs.trip_headsign || "N/A",
-          route_id: attrs.route_id,
-          bikes_allowed: attrs.bikes_allowed
-        };
-      }
-    });
-  }
-}
-
 // --- Add or update marker ---
 function addVehicleMarker(id, lat, lon, popupContent, color, type) {
   if (vehicleMarkers[id]) {
-    // update existing marker smoothly
     vehicleMarkers[id].setLatLng([lat, lon]);
     vehicleMarkers[id].setPopupContent(popupContent);
     vehicleMarkers[id].setStyle({ fillColor: color });
@@ -188,21 +147,47 @@ function updateVehicleCount() {
     `Buses: ${busCount}, Trains: ${trainCount}, Ferries: ${ferryCount}`;
 }
 
-// --- Fetch vehicles ---
+// --- Build popup content ---
+function buildPopup(routeName, destination, vehicleLabel, busType, licensePlate, speedKmh, occupancy, bikesLine) {
+  return `
+    <b>Route:</b> ${routeName}<br>
+    <b>Destination:</b> ${destination}<br>
+    <b>Vehicle:</b> ${vehicleLabel}<br>
+    ${busType ? `<b>Bus Model:</b> ${busType}<br>` : ""}
+    <b>Number Plate:</b> ${licensePlate}<br>
+    <b>Speed:</b> ${(speedKmh >= 0 && speedKmh <= 180 ? speedKmh.toFixed(1) : "N/A")} km/h<br>
+    <b>Occupancy:</b> ${occupancy}
+    ${bikesLine}
+  `;
+}
+
+// --- Render from cached state ---
+function renderFromCache(cachedVehicles) {
+  if (!cachedVehicles) return;
+  cachedVehicles.forEach(v => {
+    addVehicleMarker(v.vehicleId, v.lat, v.lon, v.popupContent, v.color, v.typeKey);
+  });
+  debugBox.textContent = `Loaded ${cachedVehicles.length} cached vehicles.`;
+  updateVehicleCount();
+}
+
+// --- Fetch vehicles (live) ---
 async function fetchVehicles() {
   const json = await safeFetch(realtimeUrl);
   if (!json) return;
   const vehicles = json?.response?.entity || json?.entity || [];
   const newVehicleIds = new Set();
   const inServiceAM = [], outOfServiceAM = [];
-
-  // Collect all tripIds
   const allTripIds = [];
+
   vehicles.forEach(v => {
     const tripId = v.vehicle?.trip?.trip_id;
     if (tripId) allTripIds.push(tripId);
   });
+
   await fetchTripsBatch([...new Set(allTripIds)]);
+
+  const cachedState = [];
 
   await Promise.all(vehicles.map(async v => {
     const vehicleId = v.vehicle?.vehicle?.id;
@@ -216,16 +201,12 @@ async function fetchVehicles() {
     const vehicleNumber = Number(vehicleLabel) || Number(vehicleLabel.slice(2)) || 0;
     const licensePlate = v.vehicle.vehicle?.license_plate || "N/A";
     const speedKmh = v.vehicle.position.speed ? v.vehicle.position.speed * 3.6 : 0;
-
     const occIdx = v.vehicle.occupancy_status;
-    const occupancy = (occIdx !== undefined && occIdx >= 0 && occIdx <= 6)
-      ? occupancyLabels[occIdx]
-      : "N/A";
+    const occupancy = (occIdx !== undefined && occIdx >= 0 && occIdx <= 6) ? occupancyLabels[occIdx] : "N/A";
 
     let typeKey = "out", color = vehicleColors.out;
     let routeName = "Out of Service", destination = "N/A";
     const routeId = v.vehicle?.trip?.route_id;
-
     if (routeId && routes[routeId]) {
       const r = routes[routeId];
       routeName = r.route_short_name || r.route_long_name || "N/A";
@@ -235,9 +216,8 @@ async function fetchVehicles() {
         case 4: typeKey = "ferry"; break;
       }
       if (typeKey === "train") {
-        if (r.route_color) {
-          color = `#${r.route_color}`;
-        } else if (routeName.includes("STH")) color = trainLineColors.STH;
+        if (r.route_color) color = `#${r.route_color}`;
+        else if (routeName.includes("STH")) color = trainLineColors.STH;
         else if (routeName.includes("WEST")) color = trainLineColors.WEST;
         else if (routeName.includes("EAST")) color = trainLineColors.EAST;
         else if (routeName.includes("ONE")) color = trainLineColors.ONE;
@@ -247,7 +227,6 @@ async function fetchVehicles() {
       }
     }
 
-    // Trip info
     const tripId = v.vehicle?.trip?.trip_id;
     let tripData = tripId ? tripCache[tripId] : null;
     if (tripData?.trip_headsign && tripData.trip_headsign !== "N/A") {
@@ -256,19 +235,15 @@ async function fetchVehicles() {
       destination = routes[routeId].route_long_name || routes[routeId].route_short_name || "N/A";
     }
 
-    // Bikes allowed
     let bikesLine = "";
     if (tripData?.bikes_allowed !== undefined) {
-      if (typeKey === "bus" && tripData.bikes_allowed === 2) {
-        bikesLine = `<br><b>Bikes Allowed:</b> Yes`;
-      }
+      if (typeKey === "bus" && tripData.bikes_allowed === 2) bikesLine = `<br><b>Bikes Allowed:</b> Yes`;
       if (typeKey === "train") {
         if (tripData.bikes_allowed === 2) bikesLine = `<br><b>Bikes Allowed:</b> Yes`;
         else if (tripData.bikes_allowed === 1) bikesLine = `<br><b>Bikes Allowed:</b> Some`;
       }
     }
 
-    // Bus type
     let busType = "";
     if (typeKey === "bus" && busTypes && Object.keys(busTypes).length > 0) {
       for (const model in busTypes) {
@@ -281,16 +256,7 @@ async function fetchVehicles() {
       }
     }
 
-    const popupContent = `
-      <b>Route:</b> ${routeName}<br>
-      <b>Destination:</b> ${destination}<br>
-      <b>Vehicle:</b> ${vehicleLabel}<br>
-      ${busType ? `<b>Bus Model:</b> ${busType}<br>` : ""}
-      <b>Number Plate:</b> ${licensePlate}<br>
-      <b>Speed:</b> ${(speedKmh >= 0 && speedKmh <= 180 ? speedKmh.toFixed(1) : "N/A")} km/h<br>
-      <b>Occupancy:</b> ${occupancy}
-      ${bikesLine}
-    `;
+    const popupContent = buildPopup(routeName, destination, vehicleLabel, busType, licensePlate, speedKmh, occupancy, bikesLine);
 
     if (vehicleLabel.startsWith("AM")) {
       if (typeKey === "train") inServiceAM.push({ vehicleId, lat, lon, speedKmh, vehicleLabel, color });
@@ -298,27 +264,29 @@ async function fetchVehicles() {
     }
 
     addVehicleMarker(vehicleId, lat, lon, popupContent, color, typeKey);
+
+    cachedState.push({ vehicleId, lat, lon, popupContent, color, typeKey });
   }));
 
-  // AM train pairing (colour the out unit same as in-service)
   pairAMTrains(inServiceAM, outOfServiceAM).forEach(pair => {
     const inColor = pair.inTrain.color || vehicleColors.train;
-    const inMarker = vehicleMarkers[pair.inTrain.vehicleId];
     const outMarker = vehicleMarkers[pair.outTrain.vehicleId];
-    if (inMarker && outMarker) {
+    if (outMarker) {
       outMarker.setStyle({ fillColor: inColor });
       const oldContent = outMarker.getPopup()?.getContent() || "";
       outMarker.getPopup().setContent(oldContent + `<br><b>Paired to:</b> ${pair.inTrain.vehicleLabel} (6-car)`);
     }
   });
 
-  // Remove stale markers
   Object.keys(vehicleMarkers).forEach(id => {
     if (!newVehicleIds.has(id)) {
       map.removeLayer(vehicleMarkers[id]);
       delete vehicleMarkers[id];
     }
   });
+
+  // Save snapshot to cache
+  localStorage.setItem("realtimeSnapshot", JSON.stringify(cachedState));
 
   debugBox.textContent = `Realtime update complete.`;
   updateVehicleCount();
@@ -342,7 +310,18 @@ async function init() {
   const busTypesJson = await safeFetch(busTypesUrl);
   if (busTypesJson) busTypes = busTypesJson;
 
+  // Render from cache first (if exists)
+  const cached = localStorage.getItem("realtimeSnapshot");
+  if (cached) {
+    try {
+      renderFromCache(JSON.parse(cached));
+    } catch (err) {
+      console.warn("Bad cache:", err);
+    }
+  }
+
+  // Then fetch live
   await fetchVehicles();
-  setInterval(fetchVehicles, 15000); // update every 15s
+  setInterval(fetchVehicles, 15000);
 }
 init();
