@@ -24,11 +24,39 @@ const osm = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
 const satellite = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", {
   attribution: "Tiles © Esri"
 });
+// Esri World Imagery (satellite)
+const esriImagery = L.tileLayer(
+  "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", 
+  {
+    attribution: "Tiles © Esri — Source: Esri, Maxar, Earthstar Geographics",
+    maxZoom: 20
+  }
+);
+
+// Esri Labels overlay (transparent, shows roads/cities)
+const esriLabels = L.tileLayer(
+  "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}", 
+  {
+    attribution: "Labels © Esri",
+    maxZoom: 20
+  }
+);
+
+// Hybrid = imagery + labels
+const esriHybrid = L.layerGroup([esriImagery, esriLabels]);
+
 
 const map = L.map("map", {
   center: [-36.8485, 174.7633], zoom: 12, layers: [light], zoomControl: false
 });
-const baseMaps = { "Light": light, "Dark": dark, "OSM": osm, "Satellite": satellite };
+const baseMaps = { 
+  "Light": light, 
+  "Dark": dark, 
+  "OSM": osm, 
+  "Satellite": satellite, 
+  "Esri Hybrid": esriHybrid
+};
+
 
 const vehicleLayers = {
   bus: L.layerGroup().addTo(map),
@@ -358,4 +386,5 @@ async function init() {
   setInterval(fetchVehicles, 15000);
 }
 init();
+
 
