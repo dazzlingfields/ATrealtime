@@ -1,4 +1,4 @@
-// ================== v4.21h - Realtime Vehicle Tracking (AM pairing, occupancy, bus types, train line colours, trip cache, active headsigns via proxy) ==================
+// ================== v4.22 - Realtime Vehicle Tracking (AM pairing, occupancy, bus types, train line colours, trip cache, batch trip fetching) ==================
 
 // --- API endpoints ---
 const proxyBaseUrl = "https://atrealtime.vercel.app";
@@ -81,48 +81,25 @@ function selectActiveTrip(trips) {
   return bestTrip || trips[0].attributes;
 }
 
-// --- Trip fetch with caching ---
-async function fetchTrip(tripId, routeId = null) {
-  if (!tripId && !routeId) return null;
+// --- Batch fetch trips (via proxy) ---
+async function fetchTripsBatch(tripIds) {
+  const idsToFetch = tripIds.filter(tid => tid && !tripCache[tid]);
+  if (idsToFetch.length === 0) return;
 
-  if (tripId && tripCache[tripId]) return tripCache[tripId];
-
-  // Fetch by trip_id (via proxy with batch support)
-  if (tripId) {
-    const tripJson = await safeFetch(`${tripsUrl}?ids=${tripId}`);
-    if (tripJson?.data?.length > 0) {
-      const attrs = tripJson.data[0].attributes;
+  const tripJson = await safeFetch(`${tripsUrl}?ids=${idsToFetch.join(",")}`);
+  if (tripJson?.data?.length > 0) {
+    tripJson.data.forEach(t => {
+      const attrs = t.attributes;
       if (attrs) {
-        tripCache[tripId] = {
+        tripCache[attrs.trip_id] = {
           trip_id: attrs.trip_id,
           trip_headsign: attrs.trip_headsign || "N/A",
           route_id: attrs.route_id,
           bikes_allowed: attrs.bikes_allowed
         };
-        return tripCache[tripId];
       }
-    }
+    });
   }
-
-  // Fallback: by route_id (proxy can forward this too)
-  if (routeId) {
-    const tripJson = await safeFetch(`${tripsUrl}?route_id=${routeId}`);
-    if (tripJson?.data?.length > 0) {
-      const activeAttrs = selectActiveTrip(tripJson.data);
-      if (activeAttrs) {
-        const result = {
-          trip_id: activeAttrs.trip_id,
-          trip_headsign: activeAttrs.trip_headsign || "N/A",
-          route_id: activeAttrs.route_id,
-          bikes_allowed: activeAttrs.bikes_allowed
-        };
-        if (activeAttrs.trip_id) tripCache[activeAttrs.trip_id] = result;
-        return result;
-      }
-    }
-  }
-
-  return null;
 }
 
 // --- Add or update marker ---
@@ -186,6 +163,14 @@ async function fetchVehicles() {
   const newVehicleIds = new Set();
   const inServiceAM = [], outOfServiceAM = [];
 
+  // --- Collect all unique tripIds first ---
+  const allTripIds = [];
+  vehicles.forEach(v => {
+    const tripId = v.vehicle?.trip?.trip_id;
+    if (tripId) allTripIds.push(tripId);
+  });
+  await fetchTripsBatch([...new Set(allTripIds)]); // fetch missing trips in one call
+
   await Promise.all(vehicles.map(async v => {
     const vehicleId = v.vehicle?.vehicle?.id;
     if (!v.vehicle || !v.vehicle.position || !vehicleId) return;
@@ -229,14 +214,16 @@ async function fetchVehicles() {
       }
     }
 
-    // Trip info
+    // Trip info (already fetched in batch)
     const tripId = v.vehicle?.trip?.trip_id;
-    const tripData = await fetchTrip(tripId, routeId);
+    let tripData = tripId ? tripCache[tripId] : null;
+
     if (tripData?.trip_headsign && tripData.trip_headsign !== "N/A") {
       destination = tripData.trip_headsign;
     } else if (routes[routeId]) {
       destination = routes[routeId].route_long_name || routes[routeId].route_short_name || "N/A";
     }
+
     if (tripData?.bikes_allowed !== undefined) {
       const bikeText = tripData.bikes_allowed === 2 ? "Yes" :
                        tripData.bikes_allowed === 1 ? "Some" : "No";
