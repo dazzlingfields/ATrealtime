@@ -1,8 +1,9 @@
-// ================== v4.39 - Realtime Vehicle Tracking ==================
+// ================== v4.40 - Realtime Vehicle Tracking ==================
 // Features: AM pairing, bus types, trips cache, occupancy, bikes allowed,
 // ferry speed in knots, persistent caching, headsign fallback, selectable basemaps
 // Mobile: smaller popups, Desktop: smaller font size, checkboxes toggle layers
 // Train: line-specific colours (STH, WEST, EAST, ONE)
+// Base maps: Light, Dark, OSM, Satellite, Esri Hybrid
 
 // --- API endpoints ---
 const proxyBaseUrl = "https://atrealtime.vercel.app";
@@ -24,31 +25,21 @@ const osm = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
 const satellite = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", {
   attribution: "Tiles © Esri"
 });
-// Esri World Imagery (satellite)
+// Esri Hybrid (Imagery + Labels)
 const esriImagery = L.tileLayer(
-  "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", 
-  {
-    attribution: "Tiles © Esri — Source: Esri, Maxar, Earthstar Geographics",
-    maxZoom: 20
-  }
+  "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+  { attribution: "Tiles © Esri — Source: Esri, Maxar, Earthstar Geographics", maxZoom: 20 }
 );
-
-// Esri Labels overlay (transparent, shows roads/cities)
 const esriLabels = L.tileLayer(
-  "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}", 
-  {
-    attribution: "Labels © Esri",
-    maxZoom: 20
-  }
+  "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}",
+  { attribution: "Labels © Esri", maxZoom: 20 }
 );
-
-// Hybrid = imagery + labels
 const esriHybrid = L.layerGroup([esriImagery, esriLabels]);
-
 
 const map = L.map("map", {
   center: [-36.8485, 174.7633], zoom: 12, layers: [light], zoomControl: false
 });
+
 const baseMaps = { 
   "Light": light, 
   "Dark": dark, 
@@ -56,7 +47,6 @@ const baseMaps = {
   "Satellite": satellite, 
   "Esri Hybrid": esriHybrid
 };
-
 
 const vehicleLayers = {
   bus: L.layerGroup().addTo(map),
@@ -84,7 +74,7 @@ const trainLineColors = {
   STH: "#d0021b",       // Southern: red
   WEST: "#6aa84f",      // Western: lighter green
   EAST: "#f8e71c",      // Eastern: yellow
-  ONE: "#0e76a8"        // Onehunga: teal-blue, distinct from bus blue
+  ONE: "#0e76a8"        // Onehunga: teal-blue
 };
 
 // --- Occupancy labels ---
@@ -106,7 +96,6 @@ async function safeFetch(url) {
   }
 }
 
-// Mobile-friendly marker creation
 function addVehicleMarker(id, lat, lon, popupContent, color, type, tripId) {
   const isMobile = window.innerWidth <= 600;
   const popupOpts = { maxWidth: isMobile ? 200 : 250, className: "vehicle-popup" };
@@ -120,7 +109,8 @@ function addVehicleMarker(id, lat, lon, popupContent, color, type, tripId) {
     const marker = L.circleMarker([lat, lon], {
       radius: isMobile ? 5 : 6, fillColor: color, color: "#000",
       weight: 1, opacity: 1, fillOpacity: 0.9
-    }).addTo(vehicleLayers[type] || vehicleLayers.out);
+    });
+    (vehicleLayers[type] || vehicleLayers.out).addLayer(marker);
     marker.bindPopup(popupContent, popupOpts);
     marker.tripId = tripId;
     vehicleMarkers[id] = marker;
@@ -143,9 +133,9 @@ function buildPopup(routeName, destination, vehicleLabel, busType, licensePlate,
 }
 
 function updateVehicleCount() {
-  const busCount = Object.values(vehicleMarkers).filter(m => m.options.fillColor === vehicleColors.bus).length;
-  const trainCount = Object.values(vehicleMarkers).filter(m => m.options.fillColor === vehicleColors.train || Object.values(trainLineColors).includes(m.options.fillColor)).length;
-  const ferryCount = Object.values(vehicleMarkers).filter(m => m.options.fillColor === vehicleColors.ferry).length;
+  const busCount = Object.values(vehicleMarkers).filter(m => vehicleLayers.bus.hasLayer(m)).length;
+  const trainCount = Object.values(vehicleMarkers).filter(m => vehicleLayers.train.hasLayer(m)).length;
+  const ferryCount = Object.values(vehicleMarkers).filter(m => vehicleLayers.ferry.hasLayer(m)).length;
   document.getElementById("vehicle-count").textContent = `Buses: ${busCount}, Trains: ${trainCount}, Ferries: ${ferryCount}`;
 }
 
@@ -255,7 +245,7 @@ async function fetchVehicles() {
       if (occIdx >= 0 && occIdx <= 6) occupancy = occupancyLabels[occIdx];
     }
 
-    // --- Vehicle type classification ---
+    // --- Vehicle classification ---
     let typeKey = "out", color = vehicleColors.out;
     let routeName = "Out of Service", destination = "Unknown";
     const routeId = v.vehicle?.trip?.route_id;
@@ -273,9 +263,21 @@ async function fetchVehicles() {
           else if (r.route_short_name?.includes("ONE")) color = trainLineColors.ONE;
           else color = vehicleColors.train;
           break;
-        case 3: typeKey = "bus"; color = vehicleColors.bus; break;
-        case 4: typeKey = "ferry"; color = vehicleColors.ferry; break;
+        case 3:
+          typeKey = "bus";
+          color = vehicleColors.bus;
+          break;
+        case 4:
+          typeKey = "ferry";
+          color = vehicleColors.ferry;
+          break;
       }
+    }
+
+    // Ensure any vehicle with route_type=3 always goes in bus layer
+    if (routes[routeId]?.route_type === 3) {
+      typeKey = "bus";
+      color = vehicleColors.bus;
     }
 
     if (tripId) allTripIds.push(tripId);
@@ -298,7 +300,7 @@ async function fetchVehicles() {
       }
     }
 
-    // Bus type
+    // Bus type lookup
     let busType = "";
     if (typeKey === "bus" && busTypes && Object.keys(busTypes).length > 0) {
       for (const model in busTypes) {
@@ -386,5 +388,3 @@ async function init() {
   setInterval(fetchVehicles, 15000);
 }
 init();
-
-
