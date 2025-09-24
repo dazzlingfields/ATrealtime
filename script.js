@@ -1,4 +1,6 @@
-// ================== v4.30 - Realtime Vehicle Tracking (AT occupancy fix, fast load, AM pairing, bus types, bikes allowed, headsign cache) ==================
+// ================== v4.31 - Realtime Vehicle Tracking ==================
+// Features: fast load, AM pairing, bus types, AT-specific occupancy, bikes allowed,
+// persistent caching, headsign fallback + backfill, selectable basemaps
 
 // --- API endpoints ---
 const proxyBaseUrl = "https://atrealtime.vercel.app";
@@ -81,7 +83,7 @@ function addVehicleMarker(id, lat, lon, popupContent, color, type, tripId) {
       radius: 6, fillColor: color, color: "#000",
       weight: 1, opacity: 1, fillOpacity: 0.9
     }).addTo(vehicleLayers[type] || vehicleLayers.out);
-    marker.bindPopup(popupContent, { maxWidth: 300 });
+    marker.bindPopup(popupContent, { maxWidth: 250 });
     marker.tripId = tripId;
     vehicleMarkers[id] = marker;
   }
@@ -194,11 +196,11 @@ async function fetchVehicles() {
     }
 
     let typeKey = "out", color = vehicleColors.out;
-    let routeName = "Out of Service", destination = "N/A";
+    let routeName = "Out of Service", destination = "Unknown";
     const routeId = v.vehicle?.trip?.route_id;
     if (routeId && routes[routeId]) {
       const r = routes[routeId];
-      routeName = r.route_short_name || r.route_long_name || "N/A";
+      routeName = r.route_short_name || r.route_long_name || "Unknown";
       switch (r.route_type) {
         case 2: typeKey = "train"; break;
         case 3: typeKey = "bus"; break;
@@ -210,9 +212,11 @@ async function fetchVehicles() {
     const tripId = v.vehicle?.trip?.trip_id;
     if (tripId) allTripIds.push(tripId);
 
-    // Destination (instant if cached)
+    // Destination (cached headsign or fallback route)
     if (tripId && tripCache[tripId]?.trip_headsign) {
       destination = tripCache[tripId].trip_headsign;
+    } else if (routes[routeId]) {
+      destination = routes[routeId].route_long_name || routes[routeId].route_short_name || "Unknown";
     }
 
     // Bikes allowed
@@ -278,10 +282,11 @@ async function fetchVehicles() {
   Object.values(vehicleMarkers).forEach(marker => {
     if (!marker.tripId) return;
     const tripData = tripCache[marker.tripId];
-    if (tripData?.trip_headsign && tripData.trip_headsign !== "N/A") {
+    if (tripData?.trip_headsign) {
       const old = marker.getPopup().getContent();
-      if (old.includes("Destination:</b> N/A")) {
-        marker.setPopupContent(old.replace("Destination:</b> N/A", `Destination:</b> ${tripData.trip_headsign}`));
+      // Replace fallback "Destination" with actual headsign
+      if (old.includes("Destination:</b>") && !old.includes(tripData.trip_headsign)) {
+        marker.setPopupContent(old.replace(/Destination:<\/b> .*?<br>/, `Destination:</b> ${tripData.trip_headsign}<br>`));
       }
     }
   });
