@@ -1,5 +1,7 @@
-// ================== v4.36 - Realtime Vehicle Tracking ==================
-// Fix: Convert AM + trains + ferries from m/s to km/h, add knots for ferries
+// ================== v4.37 - Realtime Vehicle Tracking ==================
+// Features: AM pairing, bus types, trips cache, occupancy, bikes allowed,
+// ferry speed in knots, persistent caching, headsign fallback, selectable basemaps
+// Mobile: smaller popups on small screens
 
 // --- API endpoints ---
 const proxyBaseUrl = "https://atrealtime.vercel.app";
@@ -71,7 +73,11 @@ async function safeFetch(url) {
   }
 }
 
+// Mobile-friendly marker creation
 function addVehicleMarker(id, lat, lon, popupContent, color, type, tripId) {
+  const isMobile = window.innerWidth <= 600;
+  const popupOpts = { maxWidth: isMobile ? 200 : 250 };
+
   if (vehicleMarkers[id]) {
     vehicleMarkers[id].setLatLng([lat, lon]);
     vehicleMarkers[id].setPopupContent(popupContent);
@@ -79,10 +85,10 @@ function addVehicleMarker(id, lat, lon, popupContent, color, type, tripId) {
     vehicleMarkers[id].tripId = tripId;
   } else {
     const marker = L.circleMarker([lat, lon], {
-      radius: 6, fillColor: color, color: "#000",
+      radius: isMobile ? 5 : 6, fillColor: color, color: "#000",
       weight: 1, opacity: 1, fillOpacity: 0.9
     }).addTo(vehicleLayers[type] || vehicleLayers.out);
-    marker.bindPopup(popupContent, { maxWidth: 250 });
+    marker.bindPopup(popupContent, popupOpts);
     marker.tripId = tripId;
     vehicleMarkers[id] = marker;
   }
@@ -207,7 +213,7 @@ async function fetchVehicles() {
       }
     }
 
-    // --- Occupancy (AT-specific) ---
+    // --- Occupancy ---
     let occupancy = "N/A";
     if (v.vehicle.occupancy_status !== undefined) {
       const occIdx = v.vehicle.occupancy_status;
