@@ -1,46 +1,11 @@
-// ================== v4.21e - Realtime Vehicle Tracking (AM pairing, occupancy, bus types, train line colours, trip cache, active headsigns fixed) ==================
+// ================== v4.21h - Realtime Vehicle Tracking (AM pairing, occupancy, bus types, train line colours, trip cache, active headsigns via proxy) ==================
 
 // --- API endpoints ---
 const proxyBaseUrl = "https://atrealtime.vercel.app";
 const realtimeUrl  = `${proxyBaseUrl}/api/realtime`;
 const routesUrl    = `${proxyBaseUrl}/api/routes`;
-const tripsUrl     = `${proxyBaseUrl}/api/trips`;
+const tripsUrl     = `${proxyBaseUrl}/api/trips`;   // proxy, supports ?ids=...
 const busTypesUrl  = "https://raw.githubusercontent.com/dazzlingfields/ATrealtime/refs/heads/main/busTypes.json";
-
-// --- Map initialization ---
-const light = L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", {
-  attribution: "&copy; OpenStreetMap contributors &copy; CARTO",
-  subdomains: "abcd",
-  maxZoom: 20
-});
-const dark = L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
-  attribution: "&copy; OpenStreetMap contributors &copy; CARTO",
-  subdomains: "abcd",
-  maxZoom: 20
-});
-const osm = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-  attribution: "&copy; OpenStreetMap contributors"
-});
-const satellite = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", {
-  attribution: "Tiles © Esri"
-});
-
-const map = L.map("map", {
-  center: [-36.8485, 174.7633],
-  zoom: 12,
-  layers: [light],
-  zoomControl: false
-});
-const baseMaps = { "Light": light, "Dark": dark, "OSM": osm, "Satellite": satellite };
-L.control.layers(baseMaps).addTo(map);
-
-// --- Vehicle layers ---
-const vehicleLayers = {
-  bus: L.layerGroup().addTo(map),
-  train: L.layerGroup().addTo(map),
-  ferry: L.layerGroup().addTo(map),
-  out: L.layerGroup().addTo(map)
-};
 
 // --- Vehicle data structures ---
 const vehicleMarkers = {};
@@ -122,15 +87,15 @@ async function fetchTrip(tripId, routeId = null) {
 
   if (tripId && tripCache[tripId]) return tripCache[tripId];
 
-  // Corrected: fetch trip by ID using REST path
+  // Fetch by trip_id (via proxy with batch support)
   if (tripId) {
-    const tripJson = await safeFetch(`${tripsUrl}/${tripId}`);
-    if (tripJson?.data) {
-      const attrs = tripJson.data.attributes || tripJson.data[0]?.attributes;
+    const tripJson = await safeFetch(`${tripsUrl}?ids=${tripId}`);
+    if (tripJson?.data?.length > 0) {
+      const attrs = tripJson.data[0].attributes;
       if (attrs) {
         tripCache[tripId] = {
           trip_id: attrs.trip_id,
-          trip_headsign: attrs.trip_headsign || attrs.headsign || "N/A",
+          trip_headsign: attrs.trip_headsign || "N/A",
           route_id: attrs.route_id,
           bikes_allowed: attrs.bikes_allowed
         };
@@ -139,7 +104,7 @@ async function fetchTrip(tripId, routeId = null) {
     }
   }
 
-  // Fallback: by route_id
+  // Fallback: by route_id (proxy can forward this too)
   if (routeId) {
     const tripJson = await safeFetch(`${tripsUrl}?route_id=${routeId}`);
     if (tripJson?.data?.length > 0) {
@@ -147,7 +112,7 @@ async function fetchTrip(tripId, routeId = null) {
       if (activeAttrs) {
         const result = {
           trip_id: activeAttrs.trip_id,
-          trip_headsign: activeAttrs.trip_headsign || activeAttrs.headsign || "N/A",
+          trip_headsign: activeAttrs.trip_headsign || "N/A",
           route_id: activeAttrs.route_id,
           bikes_allowed: activeAttrs.bikes_allowed
         };
