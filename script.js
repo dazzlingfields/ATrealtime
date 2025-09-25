@@ -1,6 +1,7 @@
-// ================== v4.47 - Realtime Vehicle Tracking ==================
-// Focus: jittered polling 10–15 s, no overlapping polls, chunked trip fetch,
-// robust reclassification, fast bus-type assignment on first in-service sighting,
+// ================== v4.48 - Realtime Vehicle Tracking ==================
+// Focus: visibility-aware polling (pause when tab hidden, resume with immediate refresh),
+// jittered polling 10–15 s, no overlapping polls, chunked trip fetch,
+// robust reclassification, fast bus-type on first in-service sighting,
 // immediate headsign updates, AM pairing, distinct train line colours.
 
 // --- API endpoints ---
@@ -75,13 +76,12 @@ const MAX_POLL_MS = 15000;
 function nextPollDelay() {
   return MIN_POLL_MS + Math.floor(Math.random() * (MAX_POLL_MS - MIN_POLL_MS + 1));
 }
-function scheduleNextFetch() {
-  setTimeout(async () => { await fetchVehicles(); scheduleNextFetch(); }, nextPollDelay());
-}
 
-// anti overlap controls
+// anti overlap and visibility controls
 let vehiclesAbort;
 let vehiclesInFlight = false;
+let pollTimeoutId = null;
+let pageVisible = !document.hidden;
 
 // --- Helpers ---
 function setDebug(msg) { if (debugBox) debugBox.textContent = msg; }
@@ -294,9 +294,10 @@ function trainColorForRoute(routeShortName) {
   return vehicleColors.train;
 }
 
-// --- Fetch vehicles live with anti overlap and resilience ---
+// --- Fetch vehicles live with anti overlap and visibility gating ---
 async function fetchVehicles() {
-  if (vehiclesInFlight) return;
+  if (!pageVisible) return;         // skip if tab hidden
+  if (vehiclesInFlight) return;     // prevent overlap
   vehiclesInFlight = true;
   try {
     vehiclesAbort?.abort?.();
@@ -322,7 +323,7 @@ async function fetchVehicles() {
       const licensePlate = v.vehicle.vehicle?.license_plate || "N/A";
 
       const operator = v.vehicle.vehicle?.operator_id
-        || (vehicleLabel.match(/^[A-Za-z]+/]?.[0] ?? "")
+        || (vehicleLabel.match(/^[A-Za-z]+/)?.[0] ?? "")
         || "";
       const vehicleNumber = (() => {
         const digits = Number(vehicleLabel.replace(/\D/g, ""));
@@ -457,9 +458,42 @@ async function fetchVehicles() {
   }
 }
 
+// --- Polling scheduler with visibility awareness ---
+function scheduleNextFetch() {
+  if (pollTimeoutId) { clearTimeout(pollTimeoutId); pollTimeoutId = null; }
+  if (!pageVisible) return; // do not schedule when hidden
+  pollTimeoutId = setTimeout(async () => {
+    if (!pageVisible) return;
+    await fetchVehicles();
+    scheduleNextFetch();
+  }, nextPollDelay());
+}
+
+// --- Visibility handling ---
+function pauseUpdates() {
+  pageVisible = false;
+  if (pollTimeoutId) { clearTimeout(pollTimeoutId); pollTimeoutId = null; }
+  vehiclesAbort?.abort?.();
+  setDebug("Paused updates: tab not visible");
+}
+
+async function resumeUpdates() {
+  if (pageVisible) return;
+  pageVisible = true;
+  setDebug("Tab visible. Refreshing…");
+  await fetchVehicles();   // immediate refresh on focus
+  scheduleNextFetch();     // resume jittered polling
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) pauseUpdates();
+  else resumeUpdates();
+});
+window.addEventListener("blur", pauseUpdates);
+window.addEventListener("focus", resumeUpdates);
+
 // --- Init ---
 async function init() {
-  // routes first
   const routesJson = await safeFetch(routesUrl);
   if (routesJson?.data) {
     routesJson.data.forEach(r => {
@@ -474,20 +508,17 @@ async function init() {
     });
   }
 
-  // preload busTypes once and build index
   const busTypesJson = await safeFetch(busTypesUrl);
   if (busTypesJson) {
     busTypes = busTypesJson;
     busTypeIndex = buildBusTypeIndex(busTypesJson);
   }
 
-  // render cached state if any
   const cached = localStorage.getItem("realtimeSnapshot");
   if (cached) {
     try { renderFromCache(JSON.parse(cached)); } catch {}
   }
 
-  // checkbox handlers
   document.querySelectorAll('#filters input[type="checkbox"]').forEach(cb => {
     cb.addEventListener("change", e => {
       const layer = e.target.getAttribute("data-layer");
@@ -498,7 +529,7 @@ async function init() {
     });
   });
 
-  // first fetch now, then jittered polling
+  // first fetch now, then schedule if visible
   await fetchVehicles();
   scheduleNextFetch();
 }
