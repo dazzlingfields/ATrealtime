@@ -3,7 +3,7 @@ const proxyBaseUrl = "https://atrealtime.vercel.app";
 const realtimeUrl  = `${proxyBaseUrl}/api/realtime`;
 const routesUrl    = `${proxyBaseUrl}/api/routes`;
 const tripsUrl     = `${proxyBaseUrl}/api/trips`;
-const busTypesUrl  = "https://raw.githubusercontent.com/dazzlingfields/ATrealtime/refs/heads/main/busTypes.json";
+const busTypesUrl  = "https://raw.githubusercontent.com/dazzlingfields/ATrealtime/refs/heads/main/busTypes.json`;
 
 const light = L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",{attribution:"&copy; OpenStreetMap contributors &copy; CARTO",subdomains:"abcd",maxZoom:20});
 const dark  = L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",{attribution:"&copy; OpenStreetMap contributors &copy; CARTO",subdomains:"abcd",maxZoom:20});
@@ -364,16 +364,25 @@ function renderFromCache(c){
   updateVehicleCount();
 }
 
-function applyRateLimitBackoff(retryAfterMs,who){const retry=Math.max(retryAfterMs||0,BACKOFF_START_MS); backoffMs=backoffMs?Math.min(BACKOFF_MAX_MS,Math.max(backoffMs*2,retry)):retry; backoffUntilTs=Date.now()+backoffMs; setDebug(`Rate limited by ${who}. Backing off for ${(backoffMs/1000).toFixed(0)} s`);}
+function applyRateLimitBackoff(retryAfterMs,who){
+  const retry=Math.max(retryAfterMs||0,BACKOFF_START_MS);
+  backoffMs=backoffMs?Math.min(BACKOFF_MAX_MS,Math.max(backoffMs*2,retry)):retry;
+  backoffUntilTs=Date.now()+backoffMs;
+  setDebug(`Rate limited by ${who}. Backing off for ${(backoffMs/1000).toFixed(0)} s`);
+}
 
-async function fetchVehicles(){
-  if(!pageVisible||vehiclesInFlight||(backoffUntilTs && Date.now()<backoffUntilTs)) return;
+async function fetchVehicles(opts = { ignoreBackoff: false }){
+  const ignoreBackoff = !!opts.ignoreBackoff;
+  if(!pageVisible||vehiclesInFlight||(!ignoreBackoff && backoffUntilTs && Date.now()<backoffUntilTs)) return;
   vehiclesInFlight=true;
   try{
     vehiclesAbort?.abort?.(); vehiclesAbort=new AbortController();
     const json=await safeFetch(realtimeUrl,{signal:vehiclesAbort.signal});
-    if(!json) return; if(json._rateLimited){ applyRateLimitBackoff(json.retryAfterMs,"realtime"); return; }
-    if(backoffMs){ backoffMs=Math.floor(backoffMs/2); if(backoffMs<5000) backoffMs=0; } backoffUntilTs=0;
+    if(!json) return;
+    if(json._rateLimited){ applyRateLimitBackoff(json.retryAfterMs,"realtime"); return; }
+
+    if(backoffMs){ backoffMs=Math.floor(backoffMs/2); if(backoffMs<5000) backoffMs=0; }
+    backoffUntilTs=0;
 
     const vehicles=json?.response?.entity||json?.entity||[];
     const newIds=new Set(), inServiceAM=[], outOfServiceAM=[], allTripIds=[], cachedState=[];
@@ -454,8 +463,22 @@ function scheduleNextFetch(){
 function pauseUpdatesNow(){ pageVisible=false; if(pollTimeoutId){clearTimeout(pollTimeoutId); pollTimeoutId=null;} vehiclesAbort?.abort?.(); setDebug("Paused updates: tab not visible"); }
 function schedulePauseAfterHide(){ if(hidePauseTimerId) return; hidePauseTimerId=setTimeout(()=>{ hidePauseTimerId=null; if(document.hidden) pauseUpdatesNow(); },HIDE_PAUSE_DELAY_MS); }
 function cancelScheduledPause(){ if(hidePauseTimerId){clearTimeout(hidePauseTimerId); hidePauseTimerId=null;} }
-async function resumeUpdatesNow(){ cancelScheduledPause(); const wasHidden=!pageVisible; pageVisible=true; if(wasHidden){ setDebug("Tab visible. Refreshing..."); await fetchVehicles(); } scheduleNextFetch(); }
-document.addEventListener("visibilitychange",()=>{ if(document.hidden) schedulePauseAfterHide(); else resumeUpdatesNow(); });
+async function resumeUpdatesNow(){
+  cancelScheduledPause();
+  const wasHidden=!pageVisible;
+  pageVisible=true;
+  if(wasHidden){
+    setDebug("Tab visible. Refreshing...");
+    await fetchVehicles({ ignoreBackoff: true });
+  }
+  scheduleNextFetch();
+}
+
+document.addEventListener("visibilitychange",()=>{ if(document.hidden) pauseUpdatesNow(); else resumeUpdatesNow(); });
+window.addEventListener("pageshow",()=>{ resumeUpdatesNow(); });
+window.addEventListener("pagehide",()=>{ pauseUpdatesNow(); });
+window.addEventListener("focus",()=>{ resumeUpdatesNow(); });
+window.addEventListener("blur",()=>{ schedulePauseAfterHide(); });
 
 async function init(){
   const rj=await safeFetch(routesUrl); if(rj&&rj._rateLimited) applyRateLimitBackoff(rj.retryAfterMs,"routes");
