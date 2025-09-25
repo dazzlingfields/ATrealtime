@@ -6,17 +6,17 @@
   <title>AT Realtime Map</title>
   <link rel="icon" type="image/x-icon" href="train.png">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
+
 <style>
+  /* Theme */
   :root{
     --panel-bg: rgba(255,255,255,0.86);
     --panel-border: rgba(60,60,67,0.18);
     --shadow: 0 8px 20px rgba(0,0,0,0.12);
     --text-strong: #1c1c1e;
     --text-subtle: #6e6e73;
-    --accent: #0a84ff; /* iOS blue */
+    --accent: #0a84ff;
   }
-
-  /* Respect dark mode */
   @media (prefers-color-scheme: dark) {
     :root{
       --panel-bg: rgba(28,28,30,0.78);
@@ -36,10 +36,9 @@
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
-
   #map { height: 100vh; width: 100vw; }
 
-  /* ===== Left panel: Apple-like card ===== */
+  /* Left panel */
   #controls {
     position: absolute; top: 12px; left: 12px; z-index: 1000;
     background: var(--panel-bg);
@@ -51,44 +50,18 @@
     padding: 14px 16px;
     max-width: 260px;
   }
-
   .control-group { margin: 0 0 10px 0; }
-  .control-group h4 {
-    margin: 0 0 8px 0;
-    font-weight: 700;
-    letter-spacing: 0.2px;
-    font-size: 18px;
-  }
-
-  /* Vehicle Display rows */
+  .control-group h4 { margin: 0 0 8px 0; font-weight: 700; letter-spacing: 0.2px; font-size: 18px; }
   #filters label {
-    display: flex; align-items: center;
-    gap: 10px;
-    margin: 6px 0;
-    font-size: 14px;
-    color: var(--text-strong);
-    cursor: pointer;
-    user-select: none;
+    display: flex; align-items: center; gap: 10px;
+    margin: 6px 0; font-size: 14px; color: var(--text-strong); cursor: pointer; user-select: none;
   }
-  /* Use iOS accent color for checkboxes */
-  #filters input[type="checkbox"] {
-    width: 16px; height: 16px;
-    accent-color: var(--accent);
-    transform-origin: left top;
-  }
+  #filters input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent); }
+  #debug, #vehicle-count { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: var(--text-subtle); margin-top: 8px; line-height: 1.35; }
 
-  #debug, #vehicle-count {
-    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    font-size: 12px;
-    color: var(--text-subtle);
-    margin-top: 8px;
-    line-height: 1.35;
-  }
-
-  /* ===== Leaflet popups look glassy ===== */
+  /* Popups */
   .leaflet-popup-content { font-size: 14px; line-height: 1.25; }
-  .leaflet-popup-content-wrapper,
-  .leaflet-popup-tip {
+  .leaflet-popup-content-wrapper, .leaflet-popup-tip {
     background: var(--panel-bg);
     backdrop-filter: saturate(180%) blur(12px);
     -webkit-backdrop-filter: saturate(180%) blur(12px);
@@ -97,37 +70,72 @@
     box-shadow: var(--shadow);
   }
 
-  /* Ensure top-right Leaflet controls (layers, search) sit above left panel */
+  /* Keep top-right controls above left panel */
   .leaflet-top.leaflet-right .leaflet-control { z-index: 2000; }
 
-  /* ===== Mobile tuning ===== */
+  /* Search control */
+  .leaflet-control.search-wrapper { /* container for positioning; JS adds here */
+  }
+  .leaflet-control.search-control {
+    position: relative;
+    background: var(--panel-bg);
+    border: 1px solid var(--panel-border);
+    border-radius: 14px;
+    box-shadow: var(--shadow);
+    display: flex; align-items: center; gap: 6px;
+    padding: 6px; z-index: 4000;
+  }
+  .search-icon-btn {
+    width: 28px; height: 28px;
+    border: 1px solid rgba(0,0,0,0.15);
+    border-radius: 8px; background: #fff; cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  .search-icon-btn svg { width: 16px; height: 16px; }
+  .search-input {
+    width: 0; opacity: 0;
+    border: 1px solid rgba(0,0,0,0.15);
+    border-radius: 10px; padding: 8px 12px; font-size: 14px;
+    transition: width 140ms ease, opacity 120ms ease;
+  }
+  .search-control.expanded .search-input { width: 220px; opacity: 1; }
+  .search-cancel { display: none; }
+
+  .search-suggestions {
+    position: absolute; top: calc(100% + 6px); left: 0; right: 0;
+    background: var(--panel-bg);
+    border: 1px solid var(--panel-border);
+    border-radius: 14px; box-shadow: var(--shadow);
+    max-height: 240px; overflow: auto; display: none;
+  }
+  .search-control.expanded .search-suggestions { display: block; }
+  .suggestion-section { padding: 8px 10px 4px 10px; font-size: 12px; color: var(--text-subtle); }
+  .suggestion-item { padding: 10px 14px; font-size: 14px; cursor: pointer; display: flex; justify-content: space-between; }
+  .suggestion-item:hover, .suggestion-item:active { background: rgba(10,132,255,0.08); }
+  .suggestion-meta { color: #666; font-size: 12px; }
+
+  /* Mobile */
   @media (max-width: 600px) {
-    #controls {
-      top: 10px; left: 10px;
-      padding: 10px 12px;
-      border-radius: 18px;
-      max-width: 178px;           /* smaller card on mobile */
-    }
+    #controls { padding: 10px 12px; border-radius: 18px; max-width: 172px; }
     .control-group h4 { font-size: 16px; margin-bottom: 6px; }
     #filters label { margin: 4px 0; font-size: 13px; gap: 8px; }
-    #filters input[type="checkbox"] {
-      width: 14px; height: 14px;
-      transform: scale(0.88);     /* smaller tick boxes */
-    }
-
+    #filters input[type="checkbox"] { width: 14px; height: 14px; transform: scale(0.88); transform-origin: left top; }
     .leaflet-popup-content { font-size: 12px; }
+
+    /* Search remains retractable but uses larger touch targets and wider field when expanded */
+    .search-icon-btn { width: 32px; height: 32px; }
+    .search-control.expanded .search-input { width: min(70vw, 360px); font-size: 16px; padding: 10px 12px; }
+    .search-cancel {
+      display: none; /* shown via JS only while expanded on mobile */
+      padding: 0 10px; height: 32px; border-radius: 8px;
+      border: 1px solid rgba(0,0,0,0.15); background: #fff; color: #0a84ff; font-size: 14px;
+    }
+    .search-control.expanded .search-cancel { display: inline-flex; align-items: center; justify-content: center; }
+    .search-suggestions { max-height: 55vh; }
   }
-
-  .leaflet-control-layers {
-  background: var(--panel-bg);
-  border: 1px solid var(--panel-border);
-  border-radius: 14px;
-  box-shadow: var(--shadow);
-}
-.leaflet-control-layers-expanded { padding: 8px 10px; }
-.leaflet-control-layers-selector { accent-color: var(--accent); }
-
 </style>
+
+
 
 
 </head>
@@ -155,6 +163,7 @@
 
 </body>
 </html>
+
 
 
 
