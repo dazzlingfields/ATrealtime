@@ -7,102 +7,68 @@
   <link rel="icon" type="image/x-icon" href="train.png">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
 
-  <style>
-    body {
-      font-family: Arial, sans-serif;
-      margin: 0;
-      padding: 0;
-    }
-    #map {
-      height: 100vh;
-      width: 100vw;
-    }
+<style>
+  body { font-family: Arial, sans-serif; margin: 0; padding: 0; }
+  #map { height: 100vh; width: 100vw; }
+  html, body { margin: 0; padding: 0; width: 100%; overflow-x: hidden; }
 
-    html, body {
-      margin: 0;
-      padding: 0;
-      width: 100%;
-      overflow-x: hidden;  /* Prevent horizontal scroll */
-    }
+  /* Left controls (desktop defaults) */
+  #controls {
+    position: absolute; top: 10px; left: 10px; z-index: 1000;
+    background: rgba(255,255,255,0.9);
+    padding: 15px; border-radius: 12px;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.12);
+    max-width: 260px;
+    backdrop-filter: blur(2px);
+  }
+  .control-group { margin-bottom: 14px; }
+  .control-group h4 { margin: 0 0 8px 0; font-size: 1.2em; color: #333; }
+  /* stack labels tightly but readable */
+  #filters label {
+    display: flex; align-items: center; gap: 8px;
+    margin: 6px 0; font-size: 0.92em; color: #333; cursor: pointer;
+  }
+  #filters input[type="checkbox"] { width: 16px; height: 16px; }
 
+  #debug, #vehicle-count {
+    font-family: monospace; font-size: 0.82em; color: #777; margin-top: 10px;
+  }
+
+  /* Leaflet popup tweaks */
+  .leaflet-popup-content { font-size: 14px; line-height: 1.2em; }
+  .leaflet-popup-content-wrapper, .leaflet-popup-tip {
+    background: rgba(255,255,255,0.85); backdrop-filter: blur(4px);
+  }
+
+  /* Ensure top-right Leaflet controls (layers/search) sit above the left panel */
+  .leaflet-top.leaflet-right .leaflet-control { z-index: 2000; }
+
+  /* --- Mobile-specific tweaks --- */
+  @media (max-width: 600px) {
+    /* Compact left panel */
     #controls {
-      position: absolute;
-      top: 10px;
-      left: 10px;
-      z-index: 1000;
-      background: rgba(255, 255, 255, 0.8);
-      padding: 15px;
-      border-radius: 8px;
-      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-      max-width: 250px;
+      padding: 8px 10px; max-width: 200px;
+      border-radius: 14px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+      background: rgba(255,255,255,0.92);
     }
-    .control-group {
-      margin-bottom: 15px;
-    }
-    .control-group h4 {
-      margin-top: 0;
-      margin-bottom: 8px;
-      font-size: 1.1em;
-      color: #333;
-    }
-    .control-group label {
-      display: block;
-      margin-bottom: 5px;
-      font-size: 0.9em;
-      color: #555;
-      cursor: pointer;
-    }
-    #debug {
-      font-family: monospace;
-      font-size: 0.8em;
-      color: #777;
-      margin-top: 10px;
-    }
-    .vehicle-icon {
-      text-align: center;
-    }
-    #vehicle-count {
-      font-family: monospace;
-      font-size: 0.8em;
-      color: #777;
-      margin-top: 10px;
+    .control-group h4 { font-size: 1.05em; margin-bottom: 6px; }
+    #filters label { margin: 4px 0; font-size: 0.85em; gap: 6px; }
+    /* Smaller, tighter checkboxes */
+    #filters input[type="checkbox"] {
+      width: 14px; height: 14px;
+      transform: scale(0.9);
+      transform-origin: left top;
     }
 
-    /* --- Leaflet popup tweaks --- */
-    .leaflet-popup-content {
-      font-size: 14px;
-      line-height: 1.2em;
-    }
-    
-.leaflet-popup-content-wrapper,
-.leaflet-popup-tip {
-  background: rgba(255, 255, 255, 0.85); 
-  backdrop-filter: blur(4px);            
-}
+    /* Leaflet layer control text size */
+    .leaflet-control-layers { font-size: 12px; padding: 2px 4px; }
+    .leaflet-control-layers-selector { transform: scale(0.85); margin-right: 2px; }
 
-    /* --- Mobile-specific tweaks --- */
-    @media (max-width: 600px) {
-      .leaflet-popup-content {
-        font-size: 12px;
-        max-width: 200px !important;
-      }
-      .leaflet-control-layers {
-        font-size: 12px;
-        padding: 2px 4px;
-      }
-      .leaflet-control-layers-selector {
-        transform: scale(0.85);
-        margin-right: 2px;
-      }
-      #controls {
-        padding: 10px;
-        max-width: 200px;
-      }
-      .control-group label {
-        font-size: 0.8em;
-      }
-    }
-  </style>
+    /* Popup readability on small screens */
+    .leaflet-popup-content { font-size: 12px; max-width: 200px !important; }
+  }
+</style>
+
 </head>
 <body>
 
@@ -128,4 +94,5 @@
 
 </body>
 </html>
+
 
