@@ -1,180 +1,121 @@
 // api/trips.js
-// Accepts /api/trips?ids=ID1,ID2 and fans out to GET {BASE}/{id} per id.
-// Merges results into { data: [...] }. Respects Retry-After exactly (with small jitter)
-// and does NOT do exponential doubling server-side.
+export default async function handler(req, res) {
+  // CORS
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET,OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  if (req.method === "OPTIONS") return res.status(200).end();
 
-let cacheById = new Map();      // id -> { body: string, expiry: number }
-let inflightById = new Map();   // id -> Promise<string|null>
-let blockUntilTs = 0;           // circuit breaker until this timestamp
+  const idsParam = String(req.query.ids || "").trim();
+  if (!idsParam) return res.status(400).json({ error: "Missing ?ids=trip_id1,trip_id2" });
 
-const TTL_MS = 5000;            // cache each trip for 5 s
-const CONCURRENCY = 6;          // parallel upstream calls
-const DEFAULT_RETRY_MS = 30000; // if upstream gives no Retry-After
-const JITTER_PCT = 0.10;        // up to +10% jitter
+  const inputIds = dedupe(idsParam.split(",").map(s => s.trim()).filter(Boolean));
+  if (inputIds.length === 0) return res.status(400).json({ error: "No valid trip ids" });
 
-module.exports = async function handler(req, res) {
-  cors(res);
-  if (req.method === "OPTIONS") return res.status(204).end();
-
-  const base = process.env.UPSTREAM_TRIPS_BASE; // e.g. https://api.at.govt.nz/gtfs/v3/trips
-  if (!base) return res.status(500).json({ error: "Missing UPSTREAM_TRIPS_BASE env var" });
+  const BASE = "https://api.at.govt.nz/gtfs/v3/trips";
+  const PER_TRIP_TTL_MS = 60 * 1000;           // 60 s cache per trip
+  const STALE_FALLBACK_MAX_MS = 5 * 60 * 1000; // can serve stale for up to 5 min on errors
+  const MAX_CONCURRENCY = 6;
 
   const now = Date.now();
-  if (now < blockUntilTs) {
-    const retry = Math.max(1, Math.ceil((blockUntilTs - now) / 1000));
-    res.setHeader("Retry-After", String(retry));
-    return res.status(429).json({ error: "Temporarily rate limited" });
-  }
+  globalThis.__AT_TRIPS__ ||= new Map();       // Map<tripId, { data, ts }>
+  globalThis.__AT_TRIPS_INFLIGHT__ ||= new Map(); // Map<tripId, Promise>
+  const cache = globalThis.__AT_TRIPS__;
+  const inflight = globalThis.__AT_TRIPS_INFLIGHT__;
 
-  const ids = getIds(req.url);
-  if (!ids.length) {
-    res.setHeader("Cache-Control", "public, max-age=2, s-maxage=2, stale-while-revalidate=30");
-    return res.status(200).json({ data: [] });
-  }
+  const results = [];
+  const toFetch = [];
 
-  try {
-    // fetch with a global rate-limit trap that stops all workers if any sees 429
-    let rateErr = null;
-    const results = await fetchManyWithLimit(ids, CONCURRENCY, async (id) => {
-      if (rateErr) return null; // short-circuit once a 429 has been seen
-      try {
-        return await fetchTrip(id, base);
-      } catch (e) {
-        if (e && e.__rateLimit) {
-          rateErr = e;
-          return null;
-        }
-        return null; // drop failed id
-      }
-    });
-
-    if (rateErr && rateErr.retryAfterMs) {
-      // respect upstream Retry-After exactly with small jitter
-      const jitter = Math.floor(rateErr.retryAfterMs * JITTER_PCT * Math.random());
-      const waitMs = rateErr.retryAfterMs + jitter;
-      blockUntilTs = Date.now() + waitMs;
-      res.setHeader("Retry-After", String(Math.max(1, Math.ceil(waitMs / 1000))));
-      return res.status(429).json({ error: "Temporarily rate limited" });
+  for (const id of inputIds) {
+    const cached = cache.get(id);
+    if (cached && now - cached.ts < PER_TRIP_TTL_MS) {
+      results.push(cached.data);
+    } else {
+      toFetch.push(id);
     }
-
-    // Merge successful items
-    const merged = [];
-    for (const r of results) {
-      if (!r) continue; // null means 404/failed
-      try {
-        const json = JSON.parse(r);
-        if (Array.isArray(json?.data)) merged.push(...json.data);
-        else if (json?.data) merged.push(json.data);
-        else if (Array.isArray(json)) merged.push(...json);
-        else merged.push(json);
-      } catch {
-        // ignore malformed item
-      }
-    }
-
-    res.setHeader("Cache-Control", "public, max-age=2, s-maxage=2, stale-while-revalidate=30");
-    return res.status(200).json({ data: merged });
-  } catch (e) {
-    // last-resort degradation to keep UI alive
-    console.error("trips aggregation error", e);
-    res.setHeader("Cache-Control", "public, max-age=2, s-maxage=2, stale-while-revalidate=30");
-    return res.status(200).json({ data: [] });
   }
-};
 
-// Fetch a single trip with per-id cache and coalescing.
-// Throws an object { __rateLimit: true, retryAfterMs } on 429 so the caller can propagate it.
-async function fetchTrip(id, base) {
-  const now = Date.now();
+  if (toFetch.length) {
+    // simple concurrency limiter
+    const chunks = chunk(toFetch, MAX_CONCURRENCY);
+    for (const group of chunks) {
+      const promises = group.map(id => getTripWithCache(id, {
+        base: BASE, cache, inflight, now,
+        ttlMs: PER_TRIP_TTL_MS, staleMaxMs: STALE_FALLBACK_MAX_MS
+      }));
+      const groupResults = await Promise.all(promises);
+      results.push(...groupResults.filter(Boolean));
+    }
+  }
 
-  // serve from per-id cache
-  const hit = cacheById.get(id);
-  if (hit && hit.expiry > now) return hit.body;
+  // Keep output order loosely by the input ids
+  const byId = new Map(results.map(obj => [obj?.id || obj?.attributes?.trip_id, obj]));
+  const ordered = inputIds
+    .map(id => byId.get(id))
+    .filter(Boolean);
 
-  // coalesce concurrent requests for the same id
-  if (inflightById.has(id)) return inflightById.get(id);
+  setSWRHeaders(res, PER_TRIP_TTL_MS, 30);
+  res.setHeader("x-cache", `trips items=${ordered.length}/${inputIds.length}`);
+  return res.status(200).json({ data: ordered });
+}
+
+async function getTripWithCache(id, ctx) {
+  const { base, cache, inflight, now, ttlMs, staleMaxMs } = ctx;
+
+  // reuse in-flight fetch if present
+  if (inflight.has(id)) {
+    try { return await inflight.get(id); } finally { inflight.delete(id); }
+  }
+
+  const cached = cache.get(id);
+  const fresh = cached && now - cached.ts < ttlMs;
+
+  if (fresh) return cached.data;
 
   const p = (async () => {
     try {
-      const url = buildTripUrl(base, id);
-      const upstream = await fetch(url, {
-        cache: "no-store",
-        headers: { "Ocp-Apim-Subscription-Key": process.env.AT_API_KEY }
+      const r = await fetch(`${base}/${encodeURIComponent(id)}`, {
+        headers: { "Ocp-Apim-Subscription-Key": process.env.AT_API_KEY },
+        cache: "no-store"
       });
 
-      if (upstream.status === 429) {
-        const ra = upstream.headers.get("Retry-After");
-        const retryAfterMs = parseRetryAfterMs(ra) || DEFAULT_RETRY_MS;
-        throw { __rateLimit: true, retryAfterMs };
+      if (r.status === 404) return null; // skip unknown
+      if (r.status === 403 || r.status === 429) {
+        if (cached && now - cached.ts <= staleMaxMs) return cached.data;
+        return null;
       }
-
-      if (upstream.status === 404) return null; // drop missing ids quietly
-
-      if (!upstream.ok) {
-        const text = await upstream.text().catch(() => "");
-        console.error("trip upstream error", upstream.status, upstream.statusText, "id:", id, "body:", text?.slice(0, 200));
+      if (!r.ok) {
+        if (cached && now - cached.ts <= staleMaxMs) return cached.data;
         return null;
       }
 
-      const body = await upstream.text();
-      cacheById.set(id, { body, expiry: Date.now() + TTL_MS });
-      return body;
-    } finally {
-      inflightById.delete(id);
+      const data = await r.json(); // expected to be { data: { id, attributes: {...} } } or { data: [...] }
+      // Normalize to a single object with attributes, matching your client parser
+      let node = null;
+      if (data && Array.isArray(data.data)) node = data.data[0] || null;
+      else if (data && data.data) node = data.data;
+      else node = data; // in case API returns the object directly
+
+      if (!node) return null;
+
+      // Ensure attributes keys used by the client exist
+      // trip_id, trip_headsign, route_id, bikes_allowed
+      // We pass through whatever upstream provides.
+      cache.set(id, { data: node, ts: Date.now() });
+      return node;
+    } catch {
+      if (cached && now - cached.ts <= staleMaxMs) return cached.data;
+      return null;
     }
   })();
 
-  inflightById.set(id, p);
-  return p;
+  inflight.set(id, p);
+  try { return await p; } finally { inflight.delete(id); }
 }
 
-// helpers
-
-function buildTripUrl(base, id) {
-  const b = base.endsWith("/") ? base.slice(0, -1) : base;
-  return `${b}/${encodeURIComponent(id)}`;
-}
-
-function getIds(u) {
-  try {
-    const i = typeof u === "string" ? u.indexOf("?") : -1;
-    if (i < 0) return [];
-    const qs = new URLSearchParams(u.slice(i));
-    const v = qs.get("ids");
-    if (!v) return [];
-    return v.split(",").map(s => s.trim()).filter(Boolean);
-  } catch {
-    return [];
-  }
-}
-
-function parseRetryAfterMs(v) {
-  if (!v) return 0;
-  const n = Number(v);
-  if (!Number.isNaN(n)) return Math.max(0, Math.floor(n * 1000));
-  const t = Date.parse(v);
-  return Number.isNaN(t) ? 0 : Math.max(0, t - Date.now());
-}
-
-async function fetchManyWithLimit(items, limit, fn) {
-  const out = new Array(items.length);
-  let i = 0;
-  async function worker() {
-    while (true) {
-      const idx = i++;
-      if (idx >= items.length) return;
-      out[idx] = await fn(items[idx]);
-    }
-  }
-  const workers = [];
-  for (let k = 0; k < Math.min(limit, items.length); k++) workers.push(worker());
-  await Promise.all(workers);
-  return out;
-}
-
-function cors(res) {
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET,OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
-  return res;
+function chunk(arr, n) { const out = []; for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n)); return out; }
+function dedupe(arr) { return Array.from(new Set(arr)); }
+function setSWRHeaders(res, ttlMs, swrSeconds) {
+  const sMaxAge = Math.max(1, Math.floor(ttlMs / 1000));
+  res.setHeader("Cache-Control", `s-maxage=${sMaxAge}, stale-while-revalidate=${swrSeconds}`);
 }
