@@ -1,6 +1,6 @@
-// ================== v4.46 - Realtime Vehicle Tracking ==================
-// Focus: no overlapping polls, chunked trip fetch, resilient errors.
-// Also: fast bus-type on first in-service sighting, robust reclassification,
+// ================== v4.47 - Realtime Vehicle Tracking ==================
+// Focus: jittered polling 10–15 s, no overlapping polls, chunked trip fetch,
+// robust reclassification, fast bus-type assignment on first in-service sighting,
 // immediate headsign updates, AM pairing, distinct train line colours.
 
 // --- API endpoints ---
@@ -54,11 +54,11 @@ const overlayMaps = {
 L.control.layers(baseMaps, overlayMaps).addTo(map);
 
 // --- Data and state ---
-const vehicleMarkers = {};   // id -> Leaflet marker with extra fields
+const vehicleMarkers = {};
 const tripCache = {};
 let routes = {};
 let busTypes = {};
-let busTypeIndex = {};       // operator -> number -> model
+let busTypeIndex = {};
 const debugBox = document.getElementById("debug");
 
 const vehicleColors = { bus: "#4a90e2", train: "#d0021b", ferry: "#1abc9c", out: "#9b9b9b" };
@@ -68,6 +68,16 @@ const occupancyLabels = [
   "Empty","Many Seats Available","Few Seats Available",
   "Standing Room Only","Limited Standing Room","Full","Not accepting passengers"
 ];
+
+// polling jitter window
+const MIN_POLL_MS = 10000;
+const MAX_POLL_MS = 15000;
+function nextPollDelay() {
+  return MIN_POLL_MS + Math.floor(Math.random() * (MAX_POLL_MS - MIN_POLL_MS + 1));
+}
+function scheduleNextFetch() {
+  setTimeout(async () => { await fetchVehicles(); scheduleNextFetch(); }, nextPollDelay());
+}
 
 // anti overlap controls
 let vehiclesAbort;
@@ -99,7 +109,6 @@ function chunk(arr, n) {
   return out;
 }
 
-// Build a fast index from the static busTypes JSON
 function buildBusTypeIndex(json) {
   const index = {};
   if (!json || typeof json !== "object") return index;
@@ -130,7 +139,6 @@ function addOrUpdateMarker(id, lat, lon, popupContent, color, type, tripId, fiel
     m.setStyle({ fillColor: color });
     m.tripId = tripId;
     Object.assign(m, fields);
-    // ensure correct layer assignment if classification changed
     Object.values(vehicleLayers).forEach(layer => layer.removeLayer(m));
     (vehicleLayers[type] || vehicleLayers.out).addLayer(m);
   } else {
@@ -174,7 +182,7 @@ async function fetchTripsBatch(tripIds) {
   const idsToFetch = tripIds.filter(tid => tid && !tripCache[tid]);
   if (idsToFetch.length === 0) return;
 
-  const batches = chunk([...new Set(idsToFetch)], 100); // tune as needed
+  const batches = chunk([...new Set(idsToFetch)], 100);
   for (const ids of batches) {
     const tripJson = await safeFetch(`${tripsUrl}?ids=${ids.join(",")}`);
     if (!tripJson) continue;
@@ -191,7 +199,6 @@ async function fetchTripsBatch(tripIds) {
         }
       });
 
-      // refresh popups for this batch immediately
       ids.forEach(tid => {
         const trip = tripCache[tid];
         if (!trip) return;
@@ -289,14 +296,14 @@ function trainColorForRoute(routeShortName) {
 
 // --- Fetch vehicles live with anti overlap and resilience ---
 async function fetchVehicles() {
-  if (vehiclesInFlight) return;            // prevent overlap
+  if (vehiclesInFlight) return;
   vehiclesInFlight = true;
   try {
-    vehiclesAbort?.abort?.();              // cancel any stale request
+    vehiclesAbort?.abort?.();
     vehiclesAbort = new AbortController();
 
     const json = await safeFetch(realtimeUrl, { signal: vehiclesAbort.signal });
-    if (!json) return;                     // keep previous state on error
+    if (!json) return;
 
     const vehicles = json?.response?.entity || json?.entity || [];
     const newIds = new Set();
@@ -314,9 +321,8 @@ async function fetchVehicles() {
       const vehicleLabel = v.vehicle.vehicle?.label || "N/A";
       const licensePlate = v.vehicle.vehicle?.license_plate || "N/A";
 
-      // operator and number parsing
       const operator = v.vehicle.vehicle?.operator_id
-        || (vehicleLabel.match(/^[A-Za-z]+/)?.[0] ?? "")
+        || (vehicleLabel.match(/^[A-Za-z]+/]?.[0] ?? "")
         || "";
       const vehicleNumber = (() => {
         const digits = Number(vehicleLabel.replace(/\D/g, ""));
@@ -390,9 +396,9 @@ async function fetchVehicles() {
       const wasBus = vehicleMarkers[vehicleId]?.currentType === "bus";
       const isBusNow = typeKey === "bus";
       const mustComputeBusType =
-        (isBusNow && !busType)                       // first time we have it as bus without stored type
-        || (isBusNow && !wasBus)                     // transitioned into bus
-        || (!vehicleMarkers[vehicleId] && isBusNow); // brand new marker that is a bus
+        (isBusNow && !busType)
+        || (isBusNow && !wasBus)
+        || (!vehicleMarkers[vehicleId] && isBusNow);
 
       if (mustComputeBusType && operator && vehicleNumber) {
         const model = getBusType(operator, vehicleNumber);
@@ -432,7 +438,7 @@ async function fetchVehicles() {
     // AM pairing
     pairAMTrains(inServiceAM, outOfServiceAM);
 
-    // remove stale markers only when realtime fetch succeeded
+    // remove stale markers after a successful fetch
     Object.keys(vehicleMarkers).forEach(id => {
       if (!newIds.has(id)) {
         map.removeLayer(vehicleMarkers[id]);
@@ -444,7 +450,7 @@ async function fetchVehicles() {
     setDebug(`Realtime update complete at ${new Date().toLocaleTimeString()}`);
     updateVehicleCount();
 
-    // immediate trip fetch to fill headsigns, chunked
+    // immediate trip fetch, chunked
     await fetchTripsBatch([...new Set(allTripIds)]);
   } finally {
     vehiclesInFlight = false;
@@ -492,7 +498,8 @@ async function init() {
     });
   });
 
+  // first fetch now, then jittered polling
   await fetchVehicles();
-  setInterval(fetchVehicles, 15000);
+  scheduleNextFetch();
 }
 init();
