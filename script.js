@@ -1,9 +1,10 @@
-// ================== v4.48 - Realtime Vehicle Tracking (with popup UX) ==================
-// Focus: visibility-aware polling (pause when tab hidden, resume with immediate refresh),
-// jittered polling 10–15 s, no overlapping polls, chunked trip fetch,
-// robust reclassification, fast bus-type on first in-service sighting,
-// immediate headsign updates, AM pairing, distinct train line colours.
-// Added: transparent popups, open on hover, click to pin/unpin.
+// ================== v4.52 - Realtime Vehicle Tracking ==================
+// Changes:
+// - Hover opens popup; click pins until clicking elsewhere or another vehicle
+// - When tab becomes hidden: wait ~10 s, then pause polling; resume with immediate refresh on visible
+// - Keeps: jittered 10–15 s polling, anti-overlap, 429 backoff, chunked trips,
+//          bus-type lookup, immediate headsign updates, AM pairing, train line colours,
+//          semi-transparent popups, overlays controlled via your own HTML (not Leaflet control)
 
 // --- API endpoints ---
 const proxyBaseUrl = "https://atrealtime.vercel.app";
@@ -31,20 +32,19 @@ const esriImagery = L.tileLayer(
 );
 const esriLabels = L.tileLayer(
   "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}",
-  { attribution: "Labels © Esri", maxZoom: 20
-});
+  { attribution: "Labels © Esri", maxZoom: 20 }
+);
 const esriHybrid = L.layerGroup([esriImagery, esriLabels]);
 
 const map = L.map("map", {
   center: [-36.8485, 174.7633], zoom: 12, layers: [light], zoomControl: false
 });
 
+// Only base maps in control; your overlay checkboxes in HTML drive layer visibility
 const baseMaps = { "Light": light, "Dark": dark, "OSM": osm, "Satellite": satellite, "Esri Hybrid": esriHybrid };
-
-// Show only base maps in the Leaflet control
 L.control.layers(baseMaps, null).addTo(map);
 
-// Overlay groups exist but are not exposed in the Leaflet control
+// Overlay groups exist, but are not shown in the Leaflet control
 const vehicleLayers = {
   bus: L.layerGroup().addTo(map),
   train: L.layerGroup().addTo(map),
@@ -60,36 +60,64 @@ let busTypes = {};
 let busTypeIndex = {};
 const debugBox = document.getElementById("debug");
 
-// Popup pinning state
+// Popup pinning state and map click-to-unpin
 let pinnedPopup = null;
+map.on("click", function () {
+  if (pinnedPopup) { pinnedPopup.closePopup(); pinnedPopup = null; }
+});
 
 const vehicleColors = { bus: "#4a90e2", train: "#d0021b", ferry: "#1abc9c", out: "#9b9b9b" };
 const trainLineColors = { STH: "#d0021b", WEST: "#6aa84f", EAST: "#f8e71c", ONE: "#0e76a8" };
-
 const occupancyLabels = [
   "Empty","Many Seats Available","Few Seats Available",
   "Standing Room Only","Limited Standing Room","Full","Not accepting passengers"
 ];
 
-// polling jitter window
+// --- Polling control ---
 const MIN_POLL_MS = 10000;
 const MAX_POLL_MS = 15000;
-function nextPollDelay() {
+function basePollDelay() {
   return MIN_POLL_MS + Math.floor(Math.random() * (MAX_POLL_MS - MIN_POLL_MS + 1));
 }
 
-// anti overlap and visibility controls
+// Backoff for 429
+let backoffMs = 0;
+const BACKOFF_START_MS = 30000;           // first backoff 30 s (or Retry-After if larger)
+const BACKOFF_MAX_MS = 5 * 60 * 1000;     // cap at 5 min
+let backoffUntilTs = 0;
+
+// Anti-overlap and visibility flags
 let vehiclesAbort;
 let vehiclesInFlight = false;
 let pollTimeoutId = null;
 let pageVisible = !document.hidden;
 
+// Delayed pause when hidden
+let hidePauseTimerId = null;
+const HIDE_PAUSE_DELAY_MS = 10000;
+
 // --- Helpers ---
 function setDebug(msg) { if (debugBox) debugBox.textContent = msg; }
 
+function parseRetryAfterMs(value) {
+  if (!value) return 0;
+  const sec = Number(value);
+  if (!isNaN(sec)) return Math.max(0, Math.floor(sec * 1000));
+  const ts = Date.parse(value);
+  return isNaN(ts) ? 0 : Math.max(0, ts - Date.now());
+}
+
+// safeFetch: returns null on network/other errors; returns {_rateLimited:true,retryAfterMs} on 429
 async function safeFetch(url, opts = {}) {
   try {
     const res = await fetch(url, { cache: "no-store", ...opts });
+    if (res.status === 429) {
+      const retryAfterMs = parseRetryAfterMs(res.headers.get("Retry-After"));
+      let body = "";
+      try { body = await res.text(); } catch {}
+      console.warn("429 Too Many Requests", { url, retryAfterMs, body: body?.slice(0, 200) });
+      return { _rateLimited: true, retryAfterMs };
+    }
     if (!res.ok) {
       let body = "";
       try { body = await res.text(); } catch {}
@@ -104,11 +132,7 @@ async function safeFetch(url, opts = {}) {
   }
 }
 
-function chunk(arr, n) {
-  const out = [];
-  for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n));
-  return out;
-}
+function chunk(arr, n) { const out = []; for (let i=0;i<arr.length;i+=n) out.push(arr.slice(i,i+n)); return out; }
 
 function buildBusTypeIndex(json) {
   const index = {};
@@ -131,7 +155,7 @@ function getBusType(operator, vehicleNumber) {
 
 function buildPopup(routeName, destination, vehicleLabel, busType, licensePlate, speedStr, occupancy, bikesLine) {
   return `
-    <div style="font-size: 0.9em; line-height: 1.3;">
+    <div style="font-size:0.9em;line-height:1.3;">
       <b>Route:</b> ${routeName}<br>
       <b>Destination:</b> ${destination}<br>
       <b>Vehicle:</b> ${vehicleLabel}<br>
@@ -144,7 +168,7 @@ function buildPopup(routeName, destination, vehicleLabel, busType, licensePlate,
   `;
 }
 
-// --- Marker creation/update with hover-open and click-to-pin ---
+// --- Marker creation/update with hover-open, click-to-pin, and unpin on map click ---
 function addOrUpdateMarker(id, lat, lon, popupContent, color, type, tripId, fields = {}) {
   const isMobile = window.innerWidth <= 600;
   const popupOpts = { maxWidth: isMobile ? 200 : 250, className: "vehicle-popup" };
@@ -166,21 +190,22 @@ function addOrUpdateMarker(id, lat, lon, popupContent, color, type, tripId, fiel
     (vehicleLayers[type] || vehicleLayers.out).addLayer(marker);
     marker.bindPopup(popupContent, popupOpts);
 
-    // Hover to open, mouseout to close unless pinned
-    marker.on("mouseover", function () { if (pinnedPopup !== this) this.openPopup(); });
-    marker.on("mouseout",  function () { if (pinnedPopup !== this) this.closePopup(); });
-
-    // Click to pin or unpin
-    marker.on("click", function () {
-      if (pinnedPopup === this) {
-        pinnedPopup = null;
-        this.closePopup();
-      } else {
-        if (pinnedPopup) pinnedPopup.closePopup();
+    if (!marker._eventsBound) {
+      // Hover opens when not pinned
+      marker.on("mouseover", function () { if (pinnedPopup !== this) this.openPopup(); });
+      // Mouseout closes when not pinned
+      marker.on("mouseout", function () { if (pinnedPopup !== this) this.closePopup(); });
+      // Click pins; clicking another marker switches the pin
+      marker.on("click", function (e) {
+        if (pinnedPopup && pinnedPopup !== this) pinnedPopup.closePopup();
         pinnedPopup = this;
         this.openPopup();
-      }
-    });
+        if (e && e.originalEvent && typeof e.originalEvent.stopPropagation === "function") {
+          e.originalEvent.stopPropagation(); // avoid immediate unpin from map click
+        }
+      });
+      marker._eventsBound = true;
+    }
 
     marker.tripId = tripId;
     Object.assign(marker, fields);
@@ -196,7 +221,7 @@ function updateVehicleCount() {
   if (el) el.textContent = `Buses: ${busCount}, Trains: ${trainCount}, Ferries: ${ferryCount}`;
 }
 
-// --- Add transparent popup styling ---
+// --- Semi-transparent popup styling ---
 (function injectPopupStyle() {
   const style = document.createElement("style");
   style.textContent = `
@@ -216,7 +241,10 @@ async function fetchTripsBatch(tripIds) {
   const batches = chunk([...new Set(idsToFetch)], 100);
   for (const ids of batches) {
     const tripJson = await safeFetch(`${tripsUrl}?ids=${ids.join(",")}`);
-    if (!tripJson) continue;
+    if (!tripJson || tripJson._rateLimited) {
+      if (tripJson && tripJson._rateLimited) applyRateLimitBackoff(tripJson.retryAfterMs, "trips");
+      continue;
+    }
     if (tripJson?.data?.length > 0) {
       tripJson.data.forEach(t => {
         const a = t.attributes;
@@ -230,6 +258,7 @@ async function fetchTripsBatch(tripIds) {
         }
       });
 
+      // refresh any markers for these trips
       ids.forEach(tid => {
         const trip = tripCache[tid];
         if (!trip) return;
@@ -265,7 +294,7 @@ function pairAMTrains(inService, outOfService) {
       if (usedOut.has(o.vehicleId)) return;
       const dx = inTrain.lat - o.lat;
       const dy = inTrain.lon - o.lon;
-      const dist = Math.sqrt(dx * dx + dy * dy) * 111000;
+      const dist = Math.sqrt(dx*dx + dy*dy) * 111000;
       if (dist <= 200 && Math.abs(inTrain.speedKmh - o.speedKmh) <= 15) {
         if (dist < bestDist) { bestDist = dist; bestMatch = o; }
       }
@@ -286,9 +315,7 @@ function pairAMTrains(inService, outOfService) {
       outMarker.getPopup().setContent(baseContent + `<br><b>Paired to:</b> ${pair.inTrain.vehicleLabel} (6-car)`);
       outMarker.pairedTo = pair.inTrain.vehicleLabel;
     }
-    if (inMarker) {
-      inMarker.pairedTo = pair.outTrain.vehicleLabel;
-    }
+    if (inMarker) inMarker.pairedTo = pair.outTrain.vehicleLabel;
   });
 
   return pairs;
@@ -325,10 +352,20 @@ function trainColorForRoute(routeShortName) {
   return vehicleColors.train;
 }
 
-// --- Fetch vehicles live with anti overlap and visibility gating ---
+// --- Rate limit backoff ---
+function applyRateLimitBackoff(retryAfterMs, sourceLabel) {
+  const retry = Math.max(retryAfterMs || 0, BACKOFF_START_MS);
+  backoffMs = backoffMs ? Math.min(BACKOFF_MAX_MS, Math.max(backoffMs * 2, retry)) : retry;
+  backoffUntilTs = Date.now() + backoffMs;
+  setDebug(`Rate limited by ${sourceLabel}. Backing off for ${(backoffMs/1000).toFixed(0)} s`);
+}
+
+// --- Fetch vehicles with anti-overlap, visibility gating, and 429 handling ---
 async function fetchVehicles() {
   if (!pageVisible) return;
   if (vehiclesInFlight) return;
+  if (backoffUntilTs && Date.now() < backoffUntilTs) return;
+
   vehiclesInFlight = true;
   try {
     vehiclesAbort?.abort?.();
@@ -336,6 +373,11 @@ async function fetchVehicles() {
 
     const json = await safeFetch(realtimeUrl, { signal: vehiclesAbort.signal });
     if (!json) return;
+    if (json._rateLimited) { applyRateLimitBackoff(json.retryAfterMs, "realtime"); return; }
+
+    // decay backoff on success
+    if (backoffMs) { backoffMs = Math.floor(backoffMs / 2); if (backoffMs < 5000) backoffMs = 0; }
+    backoffUntilTs = 0;
 
     const vehicles = json?.response?.entity || json?.entity || [];
     const newIds = new Set();
@@ -353,16 +395,14 @@ async function fetchVehicles() {
       const vehicleLabel = v.vehicle.vehicle?.label || "N/A";
       const licensePlate = v.vehicle.vehicle?.license_plate || "N/A";
 
-      const operator = v.vehicle.vehicle?.operator_id
-        || (vehicleLabel.match(/^[A-Za-z]+/)?.[0] ?? "")
-        || "";
+      const operator = v.vehicle.vehicle?.operator_id || (vehicleLabel.match(/^[A-Za-z]+/)?.[0] ?? "") || "";
       const vehicleNumber = (() => {
         const digits = Number(vehicleLabel.replace(/\D/g, ""));
         if (!isNaN(digits) && digits > 0) return digits;
         return Number(vehicleLabel) || Number(vehicleLabel.slice(2)) || 0;
       })();
 
-      // speed
+      // Speed
       let speedKmh = null;
       let speedStr = "N/A";
       if (v.vehicle.position.speed !== undefined) {
@@ -381,14 +421,14 @@ async function fetchVehicles() {
         }
       }
 
-      // occupancy
+      // Occupancy
       let occupancy = "N/A";
       if (v.vehicle.occupancy_status !== undefined) {
         const idx = v.vehicle.occupancy_status;
         if (idx >= 0 && idx <= 6) occupancy = occupancyLabels[idx];
       }
 
-      // classification and line colours
+      // Classification and line colours
       let typeKey = "out", color = vehicleColors.out;
       let routeName = "Out of Service", destination = "Unknown";
       const routeId = v.vehicle?.trip?.route_id;
@@ -406,13 +446,14 @@ async function fetchVehicles() {
       if (routes[routeId]?.route_type === 3) { typeKey = "bus"; color = vehicleColors.bus; }
       if (tripId) allTripIds.push(tripId);
 
+      // Destination
       if (tripId && tripCache[tripId]?.trip_headsign) {
         destination = tripCache[tripId].trip_headsign;
       } else if (routes[routeId]) {
         destination = routes[routeId].route_long_name || routes[routeId].route_short_name || "Unknown";
       }
 
-      // bikes allowed
+      // Bikes allowed
       let bikesLine = "";
       const tripData = tripId ? tripCache[tripId] : null;
       if (tripData?.bikes_allowed !== undefined) {
@@ -423,15 +464,12 @@ async function fetchVehicles() {
         }
       }
 
-      // bus type decision points
+      // Bus type lookup
       let busType = vehicleMarkers[vehicleId]?.busType || "";
       const wasBus = vehicleMarkers[vehicleId]?.currentType === "bus";
       const isBusNow = typeKey === "bus";
       const mustComputeBusType =
-        (isBusNow && !busType)
-        || (isBusNow && !wasBus)
-        || (!vehicleMarkers[vehicleId] && isBusNow);
-
+        (isBusNow && !busType) || (isBusNow && !wasBus) || (!vehicleMarkers[vehicleId] && isBusNow);
       if (mustComputeBusType && operator && vehicleNumber) {
         const model = getBusType(operator, vehicleNumber);
         if (model) busType = model;
@@ -449,20 +487,11 @@ async function fetchVehicles() {
 
       addOrUpdateMarker(
         vehicleId, lat, lon, popupContent, color, typeKey, tripId,
-        {
-          currentType: typeKey,
-          vehicleLabel,
-          licensePlate,
-          busType,
-          speedStr,
-          occupancy,
-          bikesLine
-        }
+        { currentType: typeKey, vehicleLabel, licensePlate, busType, speedStr, occupancy, bikesLine }
       );
 
       cachedState.push({
-        vehicleId, lat, lon, popupContent, color, typeKey, tripId,
-        ts: Date.now(),
+        vehicleId, lat, lon, popupContent, color, typeKey, tripId, ts: Date.now(),
         vehicleLabel, licensePlate, busType, speedStr, occupancy, bikesLine
       });
     });
@@ -470,9 +499,10 @@ async function fetchVehicles() {
     // AM pairing
     pairAMTrains(inServiceAM, outOfServiceAM);
 
-    // remove stale markers after a successful fetch
+    // Remove stale; unpin if removing pinned marker
     Object.keys(vehicleMarkers).forEach(id => {
       if (!newIds.has(id)) {
+        if (pinnedPopup === vehicleMarkers[id]) pinnedPopup = null;
         map.removeLayer(vehicleMarkers[id]);
         delete vehicleMarkers[id];
       }
@@ -482,50 +512,74 @@ async function fetchVehicles() {
     setDebug(`Realtime update complete at ${new Date().toLocaleTimeString()}`);
     updateVehicleCount();
 
-    // immediate trip fetch, chunked
+    // Fill headsigns via trips
     await fetchTripsBatch([...new Set(allTripIds)]);
   } finally {
     vehiclesInFlight = false;
   }
 }
 
-// --- Polling scheduler with visibility awareness ---
+// --- Scheduler (jitter + backoff) ---
 function scheduleNextFetch() {
   if (pollTimeoutId) { clearTimeout(pollTimeoutId); pollTimeoutId = null; }
-  if (!pageVisible) return; // do not schedule when hidden
+  if (!pageVisible) return;
+  const delay = basePollDelay() + (backoffMs || 0);
   pollTimeoutId = setTimeout(async () => {
     if (!pageVisible) return;
     await fetchVehicles();
     scheduleNextFetch();
-  }, nextPollDelay());
+  }, delay);
 }
 
-// --- Visibility handling ---
-function pauseUpdates() {
+// --- Visibility handling with delayed pause ---
+function pauseUpdatesNow() {
   pageVisible = false;
   if (pollTimeoutId) { clearTimeout(pollTimeoutId); pollTimeoutId = null; }
   vehiclesAbort?.abort?.();
   setDebug("Paused updates: tab not visible");
 }
 
-async function resumeUpdates() {
-  if (pageVisible) return;
+function schedulePauseAfterHide() {
+  if (hidePauseTimerId) return; // already scheduled
+  hidePauseTimerId = setTimeout(() => {
+    hidePauseTimerId = null;
+    // If still hidden after the delay, pause now
+    if (document.hidden) pauseUpdatesNow();
+  }, HIDE_PAUSE_DELAY_MS);
+}
+
+function cancelScheduledPause() {
+  if (hidePauseTimerId) {
+    clearTimeout(hidePauseTimerId);
+    hidePauseTimerId = null;
+  }
+}
+
+async function resumeUpdatesNow() {
+  cancelScheduledPause();
+  const wasHidden = !pageVisible;
   pageVisible = true;
-  setDebug("Tab visible. Refreshing…");
-  await fetchVehicles();   // immediate refresh on focus
-  scheduleNextFetch();     // resume jittered polling
+  if (wasHidden) {
+    setDebug("Tab visible. Refreshing…");
+    await fetchVehicles(); // immediate refresh on focus
+  }
+  scheduleNextFetch();
 }
 
 document.addEventListener("visibilitychange", () => {
-  if (document.hidden) pauseUpdates();
-  else resumeUpdates();
+  if (document.hidden) {
+    // Do not stop immediately; wait ~10 s to allow quick tab switches without pausing
+    schedulePauseAfterHide();
+  } else {
+    // Visible again; cancel any pending pause and resume
+    resumeUpdatesNow();
+  }
 });
-window.addEventListener("blur", pauseUpdates);
-window.addEventListener("focus", resumeUpdates);
 
 // --- Init ---
 async function init() {
   const routesJson = await safeFetch(routesUrl);
+  if (routesJson && routesJson._rateLimited) applyRateLimitBackoff(routesJson.retryAfterMs, "routes");
   if (routesJson?.data) {
     routesJson.data.forEach(r => {
       const a = r.attributes || r;
@@ -540,16 +594,17 @@ async function init() {
   }
 
   const busTypesJson = await safeFetch(busTypesUrl);
-  if (busTypesJson) {
+  if (busTypesJson && busTypesJson._rateLimited) applyRateLimitBackoff(busTypesJson.retryAfterMs, "busTypes");
+  if (busTypesJson && !busTypesJson._rateLimited) {
     busTypes = busTypesJson;
     busTypeIndex = buildBusTypeIndex(busTypesJson);
   }
 
+  // Render cached snapshot if present
   const cached = localStorage.getItem("realtimeSnapshot");
-  if (cached) {
-    try { renderFromCache(JSON.parse(cached)); } catch {}
-  }
+  if (cached) { try { renderFromCache(JSON.parse(cached)); } catch {} }
 
+  // Wire your external checkboxes
   document.querySelectorAll('#filters input[type="checkbox"]').forEach(cb => {
     cb.addEventListener("change", e => {
       const layer = e.target.getAttribute("data-layer");
@@ -560,7 +615,6 @@ async function init() {
     });
   });
 
-  // first fetch now, then schedule if visible
   await fetchVehicles();
   scheduleNextFetch();
 }
