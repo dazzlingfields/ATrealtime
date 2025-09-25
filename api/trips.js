@@ -1,41 +1,66 @@
 // api/trips.js
 // Accepts /api/trips?ids=ID1,ID2 and fans out to GET {BASE}/{id} per id.
-// Merges results into { data: [...] } that matches your frontend's expectations.
+// Merges results into { data: [...] }. Respects Retry-After exactly (with small jitter)
+// and does NOT do exponential doubling server-side.
 
 let cacheById = new Map();      // id -> { body: string, expiry: number }
-let inflightById = new Map();   // id -> Promise<Response>
-let blockUntil = 0;
+let inflightById = new Map();   // id -> Promise<string|null>
+let blockUntilTs = 0;           // circuit breaker until this timestamp
 
 const TTL_MS = 5000;            // cache each trip for 5 s
-const CONCURRENCY = 6;          // limit parallel upstream calls
+const CONCURRENCY = 6;          // parallel upstream calls
+const DEFAULT_RETRY_MS = 30000; // if upstream gives no Retry-After
+const JITTER_PCT = 0.10;        // up to +10% jitter
 
 module.exports = async function handler(req, res) {
   cors(res);
   if (req.method === "OPTIONS") return res.status(204).end();
 
-  const base = process.env.UPSTREAM_TRIPS_BASE;
+  const base = process.env.UPSTREAM_TRIPS_BASE; // e.g. https://api.at.govt.nz/gtfs/v3/trips
   if (!base) return res.status(500).json({ error: "Missing UPSTREAM_TRIPS_BASE env var" });
 
   const now = Date.now();
-  if (now < blockUntil) {
-    const retry = Math.ceil((blockUntil - now) / 1000);
+  if (now < blockUntilTs) {
+    const retry = Math.max(1, Math.ceil((blockUntilTs - now) / 1000));
     res.setHeader("Retry-After", String(retry));
     return res.status(429).json({ error: "Temporarily rate limited" });
   }
 
   const ids = getIds(req.url);
   if (!ids.length) {
-    // predictable contract for the client
+    res.setHeader("Cache-Control", "public, max-age=2, s-maxage=2, stale-while-revalidate=30");
     return res.status(200).json({ data: [] });
   }
 
   try {
-    const results = await fetchManyWithLimit(ids, CONCURRENCY, id => fetchTrip(id, base));
+    // fetch with a global rate-limit trap that stops all workers if any sees 429
+    let rateErr = null;
+    const results = await fetchManyWithLimit(ids, CONCURRENCY, async (id) => {
+      if (rateErr) return null; // short-circuit once a 429 has been seen
+      try {
+        return await fetchTrip(id, base);
+      } catch (e) {
+        if (e && e.__rateLimit) {
+          rateErr = e;
+          return null;
+        }
+        return null; // drop failed id
+      }
+    });
 
-    // Normalize shapes to { data: [ ...objects... ] }
+    if (rateErr && rateErr.retryAfterMs) {
+      // respect upstream Retry-After exactly with small jitter
+      const jitter = Math.floor(rateErr.retryAfterMs * JITTER_PCT * Math.random());
+      const waitMs = rateErr.retryAfterMs + jitter;
+      blockUntilTs = Date.now() + waitMs;
+      res.setHeader("Retry-After", String(Math.max(1, Math.ceil(waitMs / 1000))));
+      return res.status(429).json({ error: "Temporarily rate limited" });
+    }
+
+    // Merge successful items
     const merged = [];
     for (const r of results) {
-      if (!r) continue; // 404s or nulls
+      if (!r) continue; // null means 404/failed
       try {
         const json = JSON.parse(r);
         if (Array.isArray(json?.data)) merged.push(...json.data);
@@ -47,29 +72,27 @@ module.exports = async function handler(req, res) {
       }
     }
 
-    // Return combined payload
     res.setHeader("Cache-Control", "public, max-age=2, s-maxage=2, stale-while-revalidate=30");
     return res.status(200).json({ data: merged });
   } catch (e) {
-    // As a last resort, keep UI alive
+    // last-resort degradation to keep UI alive
     console.error("trips aggregation error", e);
+    res.setHeader("Cache-Control", "public, max-age=2, s-maxage=2, stale-while-revalidate=30");
     return res.status(200).json({ data: [] });
   }
 };
 
-// Fetch a single trip with per-id cache and coalescing
+// Fetch a single trip with per-id cache and coalescing.
+// Throws an object { __rateLimit: true, retryAfterMs } on 429 so the caller can propagate it.
 async function fetchTrip(id, base) {
   const now = Date.now();
 
-  // cache hit
+  // serve from per-id cache
   const hit = cacheById.get(id);
   if (hit && hit.expiry > now) return hit.body;
 
-  // coalesce concurrent calls
-  if (inflightById.has(id)) {
-    const r = await inflightById.get(id);
-    return r;
-  }
+  // coalesce concurrent requests for the same id
+  if (inflightById.has(id)) return inflightById.get(id);
 
   const p = (async () => {
     try {
@@ -81,22 +104,15 @@ async function fetchTrip(id, base) {
 
       if (upstream.status === 429) {
         const ra = upstream.headers.get("Retry-After");
-        const waitMs = parseRetryAfterMs(ra);
-        if (waitMs) blockUntil = Date.now() + waitMs;
-        const body = await upstream.text();
-        // propagate 429 to caller to allow global backoff in the client if you choose to surface it
-        throw new Response(body, { status: 429, headers: { "Retry-After": ra ?? "15" } });
+        const retryAfterMs = parseRetryAfterMs(ra) || DEFAULT_RETRY_MS;
+        throw { __rateLimit: true, retryAfterMs };
       }
 
-      if (upstream.status === 404) {
-        // missing id is OK; just drop it
-        return null;
-      }
+      if (upstream.status === 404) return null; // drop missing ids quietly
 
       if (!upstream.ok) {
-        const text = await upstream.text();
-        console.error("trip upstream error", upstream.status, upstream.statusText, "id:", id, "body:", text.slice(0, 200));
-        // degrade by skipping this id
+        const text = await upstream.text().catch(() => "");
+        console.error("trip upstream error", upstream.status, upstream.statusText, "id:", id, "body:", text?.slice(0, 200));
         return null;
       }
 
@@ -112,10 +128,9 @@ async function fetchTrip(id, base) {
   return p;
 }
 
-// Helpers
+// helpers
 
 function buildTripUrl(base, id) {
-  // allows either BASE with or without trailing slash
   const b = base.endsWith("/") ? base.slice(0, -1) : base;
   return `${b}/${encodeURIComponent(id)}`;
 }
