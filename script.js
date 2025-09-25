@@ -1,10 +1,9 @@
-// v4.60 Realtime Vehicle Tracking
+// v4.61 Realtime Vehicle Tracking
 const proxyBaseUrl = "https://atrealtime.vercel.app";
 const realtimeUrl  = `${proxyBaseUrl}/api/realtime`;
 const routesUrl    = `${proxyBaseUrl}/api/routes`;
 const tripsUrl     = `${proxyBaseUrl}/api/trips`;
-const busTypesUrl = "https://raw.githubusercontent.com/dazzlingfields/ATrealtime/refs/heads/main/busTypes.json";
-
+const busTypesUrl  = "https://raw.githubusercontent.com/dazzlingfields/ATrealtime/refs/heads/main/busTypes.json";
 
 const light = L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",{attribution:"&copy; OpenStreetMap contributors &copy; CARTO",subdomains:"abcd",maxZoom:20});
 const dark  = L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",{attribution:"&copy; OpenStreetMap contributors &copy; CARTO",subdomains:"abcd",maxZoom:20});
@@ -32,9 +31,13 @@ const vehicleColors={bus:"#4a90e2",train:"#d0021b",ferry:"#1abc9c",out:"#9b9b9b"
 const trainLineColors={STH:"#d0021b",WEST:"#7fbf6a",EAST:"#f8e71c",ONE:"#0e76a8"};
 const occupancyLabels=["Empty","Many Seats Available","Few Seats Available","Standing Room Only","Limited Standing Room","Full","Not accepting passengers"];
 
-const MIN_POLL_MS=10000, MAX_POLL_MS=15000;
+// Polling with wider jitter to desync tabs
+const MIN_POLL_MS=12000, MAX_POLL_MS=18000;
 function basePollDelay(){return MIN_POLL_MS+Math.floor(Math.random()*(MAX_POLL_MS-MIN_POLL_MS+1));}
-let backoffMs=0, BACKOFF_START_MS=30000, BACKOFF_MAX_MS=5*60*1000, backoffUntilTs=0;
+
+// Backoff tuned to be less punitive
+let backoffMs=0, BACKOFF_START_MS=15000, BACKOFF_MAX_MS=120000, backoffUntilTs=0;
+
 let vehiclesAbort, vehiclesInFlight=false, pollTimeoutId=null, pageVisible=!document.hidden;
 let hidePauseTimerId=null; const HIDE_PAUSE_DELAY_MS=10000;
 
@@ -376,8 +379,15 @@ async function fetchVehicles(opts = { ignoreBackoff: false }){
   const ignoreBackoff = !!opts.ignoreBackoff;
   if(!pageVisible||vehiclesInFlight||(!ignoreBackoff && backoffUntilTs && Date.now()<backoffUntilTs)) return;
   vehiclesInFlight=true;
+
+  // Watchdog to abort stuck requests
+  const watchdogMs = 10000;
+  let watchdog;
   try{
-    vehiclesAbort?.abort?.(); vehiclesAbort=new AbortController();
+    vehiclesAbort?.abort?.();
+    vehiclesAbort=new AbortController();
+    watchdog = setTimeout(()=>{ try{ vehiclesAbort.abort(); }catch{} }, watchdogMs);
+
     const json=await safeFetch(realtimeUrl,{signal:vehiclesAbort.signal});
     if(!json) return;
     if(json._rateLimited){ applyRateLimitBackoff(json.retryAfterMs,"realtime"); return; }
@@ -452,13 +462,17 @@ async function fetchVehicles(opts = { ignoreBackoff: false }){
     updateVehicleCount();
 
     await fetchTripsBatch([...new Set(allTripIds)]);
-  }finally{ vehiclesInFlight=false; }
+  }finally{
+    clearTimeout(watchdog);
+    vehiclesInFlight=false;
+  }
 }
 
 function scheduleNextFetch(){
   if(pollTimeoutId){ clearTimeout(pollTimeoutId); pollTimeoutId=null; }
   if(!pageVisible) return;
-  const delay=basePollDelay()+(backoffMs||0);
+  const base = basePollDelay();
+  const delay = Math.max(base, backoffMs || 0); // do not add; take the larger
   pollTimeoutId=setTimeout(async()=>{ if(!pageVisible) return; await fetchVehicles(); scheduleNextFetch(); },delay);
 }
 function pauseUpdatesNow(){ pageVisible=false; if(pollTimeoutId){clearTimeout(pollTimeoutId); pollTimeoutId=null;} vehiclesAbort?.abort?.(); setDebug("Paused updates: tab not visible"); }
@@ -497,7 +511,11 @@ async function init(){
     });
   });
 
-  await fetchVehicles(); scheduleNextFetch();
+  // Stagger the first poll per tab to avoid synchronized bursts
+  const initialJitter = 500 + Math.random()*2500;
+  setTimeout(async () => {
+    await fetchVehicles({ ignoreBackoff: true });
+    scheduleNextFetch();
+  }, initialJitter);
 }
 init();
-
