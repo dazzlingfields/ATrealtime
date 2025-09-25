@@ -1,8 +1,9 @@
-// ================== v4.48 - Realtime Vehicle Tracking ==================
+// ================== v4.48 - Realtime Vehicle Tracking (with popup UX) ==================
 // Focus: visibility-aware polling (pause when tab hidden, resume with immediate refresh),
 // jittered polling 10–15 s, no overlapping polls, chunked trip fetch,
 // robust reclassification, fast bus-type on first in-service sighting,
 // immediate headsign updates, AM pairing, distinct train line colours.
+// Added: transparent popups, open on hover, click to pin/unpin.
 
 // --- API endpoints ---
 const proxyBaseUrl = "https://atrealtime.vercel.app";
@@ -30,8 +31,8 @@ const esriImagery = L.tileLayer(
 );
 const esriLabels = L.tileLayer(
   "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}",
-  { attribution: "Labels © Esri", maxZoom: 20 }
-);
+  { attribution: "Labels © Esri", maxZoom: 20
+});
 const esriHybrid = L.layerGroup([esriImagery, esriLabels]);
 
 const map = L.map("map", {
@@ -40,19 +41,16 @@ const map = L.map("map", {
 
 const baseMaps = { "Light": light, "Dark": dark, "OSM": osm, "Satellite": satellite, "Esri Hybrid": esriHybrid };
 
+// Show only base maps in the Leaflet control
+L.control.layers(baseMaps, null).addTo(map);
+
+// Overlay groups exist but are not exposed in the Leaflet control
 const vehicleLayers = {
   bus: L.layerGroup().addTo(map),
   train: L.layerGroup().addTo(map),
   ferry: L.layerGroup().addTo(map),
   out: L.layerGroup().addTo(map)
 };
-const overlayMaps = {
-  "Buses": vehicleLayers.bus,
-  "Trains": vehicleLayers.train,
-  "Ferries": vehicleLayers.ferry,
-  "Out of Service": vehicleLayers.out
-};
-L.control.layers(baseMaps, null).addTo(map);
 
 // --- Data and state ---
 const vehicleMarkers = {};
@@ -61,6 +59,9 @@ let routes = {};
 let busTypes = {};
 let busTypeIndex = {};
 const debugBox = document.getElementById("debug");
+
+// Popup pinning state
+let pinnedPopup = null;
 
 const vehicleColors = { bus: "#4a90e2", train: "#d0021b", ferry: "#1abc9c", out: "#9b9b9b" };
 const trainLineColors = { STH: "#d0021b", WEST: "#6aa84f", EAST: "#f8e71c", ONE: "#0e76a8" };
@@ -128,6 +129,22 @@ function getBusType(operator, vehicleNumber) {
   return ix ? (ix[vehicleNumber] || "") : "";
 }
 
+function buildPopup(routeName, destination, vehicleLabel, busType, licensePlate, speedStr, occupancy, bikesLine) {
+  return `
+    <div style="font-size: 0.9em; line-height: 1.3;">
+      <b>Route:</b> ${routeName}<br>
+      <b>Destination:</b> ${destination}<br>
+      <b>Vehicle:</b> ${vehicleLabel}<br>
+      ${busType ? `<b>Bus Model:</b> ${busType}<br>` : ""}
+      <b>Number Plate:</b> ${licensePlate}<br>
+      <b>Speed:</b> ${speedStr}<br>
+      <b>Occupancy:</b> ${occupancy}
+      ${bikesLine}
+    </div>
+  `;
+}
+
+// --- Marker creation/update with hover-open and click-to-pin ---
 function addOrUpdateMarker(id, lat, lon, popupContent, color, type, tripId, fields = {}) {
   const isMobile = window.innerWidth <= 600;
   const popupOpts = { maxWidth: isMobile ? 200 : 250, className: "vehicle-popup" };
@@ -148,25 +165,27 @@ function addOrUpdateMarker(id, lat, lon, popupContent, color, type, tripId, fiel
     });
     (vehicleLayers[type] || vehicleLayers.out).addLayer(marker);
     marker.bindPopup(popupContent, popupOpts);
+
+    // Hover to open, mouseout to close unless pinned
+    marker.on("mouseover", function () { if (pinnedPopup !== this) this.openPopup(); });
+    marker.on("mouseout",  function () { if (pinnedPopup !== this) this.closePopup(); });
+
+    // Click to pin or unpin
+    marker.on("click", function () {
+      if (pinnedPopup === this) {
+        pinnedPopup = null;
+        this.closePopup();
+      } else {
+        if (pinnedPopup) pinnedPopup.closePopup();
+        pinnedPopup = this;
+        this.openPopup();
+      }
+    });
+
     marker.tripId = tripId;
     Object.assign(marker, fields);
     vehicleMarkers[id] = marker;
   }
-}
-
-function buildPopup(routeName, destination, vehicleLabel, busType, licensePlate, speedStr, occupancy, bikesLine) {
-  return `
-    <div style="font-size: 0.9em; line-height: 1.3;">
-      <b>Route:</b> ${routeName}<br>
-      <b>Destination:</b> ${destination}<br>
-      <b>Vehicle:</b> ${vehicleLabel}<br>
-      ${busType ? `<b>Bus Model:</b> ${busType}<br>` : ""}
-      <b>Number Plate:</b> ${licensePlate}<br>
-      <b>Speed:</b> ${speedStr}<br>
-      <b>Occupancy:</b> ${occupancy}
-      ${bikesLine}
-    </div>
-  `;
 }
 
 function updateVehicleCount() {
@@ -176,6 +195,18 @@ function updateVehicleCount() {
   const el = document.getElementById("vehicle-count");
   if (el) el.textContent = `Buses: ${busCount}, Trains: ${trainCount}, Ferries: ${ferryCount}`;
 }
+
+// --- Add transparent popup styling ---
+(function injectPopupStyle() {
+  const style = document.createElement("style");
+  style.textContent = `
+  .leaflet-popup-content-wrapper,
+  .leaflet-popup-tip {
+    background: rgba(255,255,255,0.85);
+    backdrop-filter: blur(4px);
+  }`;
+  document.head.appendChild(style);
+})();
 
 // --- Trips batch fetch with chunking and marker refresh ---
 async function fetchTripsBatch(tripIds) {
@@ -296,8 +327,8 @@ function trainColorForRoute(routeShortName) {
 
 // --- Fetch vehicles live with anti overlap and visibility gating ---
 async function fetchVehicles() {
-  if (!pageVisible) return;         // skip if tab hidden
-  if (vehiclesInFlight) return;     // prevent overlap
+  if (!pageVisible) return;
+  if (vehiclesInFlight) return;
   vehiclesInFlight = true;
   try {
     vehiclesAbort?.abort?.();
@@ -534,4 +565,3 @@ async function init() {
   scheduleNextFetch();
 }
 init();
-
