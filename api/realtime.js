@@ -1,93 +1,94 @@
 // api/realtime.js
-let cacheBody = null;
-let cacheExpiry = 0;
-let inflight = null;
-let blockUntil = 0;
-
-const TTL_MS = 5000;
-
 export default async function handler(req, res) {
-  cors(res);
-  if (req.method === "OPTIONS") return res.status(204).end();
-
-  const now = Date.now();
-
-  if (now < blockUntil) {
-    const retry = Math.ceil((blockUntil - now) / 1000);
-    res.setHeader("Retry-After", String(retry));
-    return res.status(429).json({ error: "Temporarily rate limited" });
-  }
-
-  if (cacheBody && cacheExpiry > now) {
-    res.setHeader("Cache-Control", "public, max-age=2, s-maxage=2, stale-while-revalidate=30");
-    return res.status(200).type("application/json").send(cacheBody);
-  }
-
-  if (inflight) {
-    try { const r = await inflight; return pipe(r, res); }
-    catch { return res.status(502).json({ error: "Coalesced fetch failed" }); }
-  }
-
-  inflight = (async () => {
-    try {
-      const upstream = await fetch("https://api.at.govt.nz/realtime/legacy", {
-        cache: "no-store",
-        headers: { "Ocp-Apim-Subscription-Key": process.env.AT_API_KEY },
-      });
-
-      if (upstream.status === 429) {
-        const ra = upstream.headers.get("Retry-After");
-        const waitMs = parseRetryAfterMs(ra);
-        if (waitMs) blockUntil = Date.now() + waitMs;
-        const body = await upstream.text();
-        return new Response(body, { status: 429, headers: { "Content-Type": "application/json", "Retry-After": ra ?? "15" } });
-      }
-
-      if (!upstream.ok) {
-        const text = await upstream.text();
-        return new Response(
-          JSON.stringify({ error: `Upstream error: ${upstream.status}`, body: text.slice(0, 500) }),
-          { status: 502, headers: { "Content-Type": "application/json" } }
-        );
-      }
-
-      const body = await upstream.text();
-      cacheBody = body;
-      cacheExpiry = Date.now() + TTL_MS;
-
-      return new Response(body, {
-        status: 200,
-        headers: {
-          "Content-Type": "application/json",
-          "Cache-Control": "public, max-age=2, s-maxage=2, stale-while-revalidate=30",
-        },
-      });
-    } finally {
-      inflight = null;
-    }
-  })();
-
-  const resp = await inflight;
-  return pipe(resp, res);
-}
-
-function pipe(r, res) {
-  for (const [k, v] of r.headers.entries()) res.setHeader(k, v);
-  res.status(r.status);
-  return r.text().then(t => res.send(t));
-}
-
-function parseRetryAfterMs(v) {
-  if (!v) return 0;
-  const n = Number(v);
-  if (!Number.isNaN(n)) return Math.max(0, Math.floor(n * 1000));
-  const t = Date.parse(v);
-  return Number.isNaN(t) ? 0 : Math.max(0, t - Date.now());
-}
-
-function cors(res) {
+  // CORS
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET,OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
-  return res;
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  if (req.method === "OPTIONS") return res.status(200).end();
+
+  // ---------- tunables ----------
+  const MIN_REFRESH_MS = 5000;           // upstream at most once every 5s
+  const STALE_FALLBACK_MAX_MS = 120000;  // serve stale for up to 2 min on errors
+  const UPSTREAM_URL = "https://api.at.govt.nz/realtime/legacy";
+
+  // ---------- in-memory cache (persists on warm lambda) ----------
+  const now = Date.now();
+  globalThis.__AT_CACHE__ ||= { data: null, ts: 0, etag: null, errorTs: 0 };
+  const cache = globalThis.__AT_CACHE__;
+
+  // If we refreshed recently, serve cache immediately
+  if (cache.data && now - cache.ts < MIN_REFRESH_MS) {
+    setSWRHeaders(res, MIN_REFRESH_MS);
+    res.setHeader("x-cache", "hit");
+    return res.status(200).json(cache.data);
+  }
+
+  // Try upstream
+  try {
+    const upstreamRes = await fetch(UPSTREAM_URL, {
+      headers: { "Ocp-Apim-Subscription-Key": process.env.AT_API_KEY },
+      cache: "no-store"
+    });
+
+    // Quota or rate limiting: serve stale if we have it
+    if (upstreamRes.status === 403 || upstreamRes.status === 429) {
+      const body = await safeBody(upstreamRes);
+      res.setHeader("x-upstream-status", upstreamRes.status.toString());
+      res.setHeader("x-upstream-body", truncate(body, 160));
+      if (cache.data && now - cache.ts <= STALE_FALLBACK_MAX_MS) {
+        setSWRHeaders(res, MIN_REFRESH_MS);
+        res.setHeader("x-cache", "stale-hit");
+        return res.status(200).json(cache.data);
+      }
+      return res
+        .status(502)
+        .json({ error: `Upstream error: ${upstreamRes.status}`, body });
+    }
+
+    if (!upstreamRes.ok) {
+      const body = await safeBody(upstreamRes);
+      res.setHeader("x-upstream-status", upstreamRes.status.toString());
+      res.setHeader("x-upstream-body", truncate(body, 160));
+      if (cache.data && now - cache.ts <= STALE_FALLBACK_MAX_MS) {
+        setSWRHeaders(res, MIN_REFRESH_MS);
+        res.setHeader("x-cache", "stale-hit");
+        return res.status(200).json(cache.data);
+      }
+      return res
+        .status(502)
+        .json({ error: `Upstream error: ${upstreamRes.status}`, body });
+    }
+
+    const data = await upstreamRes.json();
+
+    // Update cache and serve
+    cache.data = data;
+    cache.ts = now;
+    setSWRHeaders(res, MIN_REFRESH_MS);
+    res.setHeader("x-cache", "miss");
+    return res.status(200).json(data);
+  } catch (err) {
+    // Network or other failure: serve stale if available
+    if (cache.data && now - cache.ts <= STALE_FALLBACK_MAX_MS) {
+      setSWRHeaders(res, MIN_REFRESH_MS);
+      res.setHeader("x-cache", "stale-hit");
+      return res.status(200).json(cache.data);
+    }
+    return res.status(500).json({ error: `Proxy error: ${err.message}` });
+  }
+}
+
+// cache-control tuned for Vercel CDN: serve cached for a few seconds and revalidate in background
+function setSWRHeaders(res, refreshMs) {
+  const sMaxAge = Math.max(1, Math.floor(refreshMs / 1000));  // e.g. 5
+  res.setHeader("Cache-Control", `s-maxage=${sMaxAge}, stale-while-revalidate=30`);
+}
+
+async function safeBody(res) {
+  try { return await res.text(); } catch { return ""; }
+}
+
+function truncate(s, n) {
+  if (!s) return "";
+  return s.length > n ? s.slice(0, n) + "…" : s;
 }
