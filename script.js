@@ -52,7 +52,7 @@ const overlayMaps = {
   "Ferries": vehicleLayers.ferry,
   "Out of Service": vehicleLayers.out
 };
-L.control.layers(baseMaps, overlayMaps).addTo(map);
+L.control.layers(baseMaps, null).addTo(map);
 
 // --- Data and state ---
 const vehicleMarkers = {};
@@ -534,3 +534,4 @@ async function init() {
   scheduleNextFetch();
 }
 init();
+
