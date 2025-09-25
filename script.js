@@ -1,17 +1,19 @@
-// ================== v4.54 - Realtime Vehicle Tracking ==================
-// Adds: retractable search control (icon until clicked), live suggestions below,
-// Enter to highlight, Escape to clear and collapse, click-out to collapse.
-// Keeps: visibility-aware polling with delayed pause, jittered 10–15 s,
-// anti-overlap, 429 backoff, chunked trips, fast bus-type lookup, immediate
-// headsigns, AM pairing, train line colours, semi-transparent popups,
-// hover-open and click-to-pin popups.
+// ================== v4.55 - Realtime Vehicle Tracking ==================
+// Tweaks:
+// - Search placeholder: "search here"
+// - Route highlight enlarges markers slightly
+// - Mobile UX: compact search, auto bottom-right placement, capped suggestions,
+//   smaller vehicle display checkboxes
+// Keeps: visibility-aware polling with delayed pause, jittered 10–15 s, anti-overlap,
+// 429 backoff, chunked trips, fast bus-type lookup, immediate headsigns, AM pairing,
+// train line colours, semi-transparent popups, hover-open + click-to-pin popups.
 
 // --- API endpoints ---
 const proxyBaseUrl = "https://atrealtime.vercel.app";
 const realtimeUrl  = `${proxyBaseUrl}/api/realtime`;
 const routesUrl    = `${proxyBaseUrl}/api/routes`;
 const tripsUrl     = `${proxyBaseUrl}/api/trips`;
-const busTypesUrl  = "https://raw.githubusercontent.com/dazzlingfields/ATrealtime/refs/heads/main/busTypes.json";
+const busTypesUrl  = "https://raw.githubusercontent.com/dazzlingfields/ATrealtime/refs/heads/main/busTypes.json`";
 
 // --- Map initialization ---
 const light = L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", {
@@ -40,11 +42,10 @@ const map = L.map("map", {
   center: [-36.8485, 174.7633], zoom: 12, layers: [light], zoomControl: false
 });
 
-// Only base maps in control; overlays toggled by your external checkboxes
 const baseMaps = { "Light": light, "Dark": dark, "OSM": osm, "Satellite": satellite, "Esri Hybrid": esriHybrid };
 L.control.layers(baseMaps, null).addTo(map);
 
-// Overlay groups
+// Overlay groups (toggled by your external checkboxes, not Leaflet control)
 const vehicleLayers = {
   bus: L.layerGroup().addTo(map),
   train: L.layerGroup().addTo(map),
@@ -60,11 +61,11 @@ let busTypes = {};
 let busTypeIndex = {};
 const debugBox = document.getElementById("debug");
 
-// Search indexes (rebuilt every refresh)
+// Search indexes (rebuilt each refresh)
 const vehicleIndexByFleet = new Map(); // normalized fleet label -> marker
 const routeIndex = new Map();          // normalized route short name -> Set<marker>
 
-// Popup pinning and map click-out to unpin and clear highlights
+// Popup pinning; map click unpins and clears highlights
 let pinnedPopup = null;
 map.on("click", function () {
   if (pinnedPopup) { pinnedPopup.closePopup(); pinnedPopup = null; }
@@ -169,8 +170,10 @@ function buildPopup(routeName, destination, vehicleLabel, busType, licensePlate,
 }
 
 // --- Marker creation/update with hover-open and click-to-pin ---
+// Store a base radius so we can enlarge temporarily on route highlight.
 function addOrUpdateMarker(id, lat, lon, popupContent, color, type, tripId, fields = {}) {
   const isMobile = window.innerWidth <= 600;
+  const baseRadius = isMobile ? 4 : 5; // slightly smaller default as requested before
   const popupOpts = { maxWidth: isMobile ? 200 : 250, className: "vehicle-popup" };
 
   if (vehicleMarkers[id]) {
@@ -179,14 +182,21 @@ function addOrUpdateMarker(id, lat, lon, popupContent, color, type, tripId, fiel
     m.setPopupContent(popupContent);
     m.setStyle({ fillColor: color });
     m.tripId = tripId;
+    if (m._baseRadius == null) m._baseRadius = baseRadius;
     Object.assign(m, fields);
     Object.values(vehicleLayers).forEach(layer => layer.removeLayer(m));
     (vehicleLayers[type] || vehicleLayers.out).addLayer(m);
   } else {
     const marker = L.circleMarker([lat, lon], {
-      radius: isMobile ? 6 : 5, fillColor: color, color: "#000",
-      weight: 1, opacity: 1, fillOpacity: 0.9
+      radius: baseRadius,
+      fillColor: color,
+      color: "#000",
+      weight: 1,
+      opacity: 1,
+      fillOpacity: 0.9
     });
+    marker._baseRadius = baseRadius;
+
     (vehicleLayers[type] || vehicleLayers.out).addLayer(marker);
     marker.bindPopup(popupContent, popupOpts);
 
@@ -218,7 +228,7 @@ function updateVehicleCount() {
   if (el) el.textContent = `Buses: ${busCount}, Trains: ${trainCount}, Ferries: ${ferryCount}`;
 }
 
-// --- Semi-transparent popup + search styles ---
+// --- Styles: semi-transparent popup, search control, mobile filters ---
 (function injectStyle() {
   const style = document.createElement("style");
   style.textContent = `
@@ -234,6 +244,7 @@ function updateVehicleCount() {
     border-radius: 6px;
     box-shadow: 0 1px 3px rgba(0,0,0,0.25);
     display: flex; align-items: center; gap: 6px;
+    z-index: 4000;
   }
   .search-icon-btn {
     width: 28px; height: 28px; border: 1px solid #bbb; border-radius: 4px;
@@ -254,17 +265,24 @@ function updateVehicleCount() {
     border: 1px solid #bbb; border-radius: 6px; margin-top: 6px; max-height: 240px; overflow: auto;
     box-shadow: 0 2px 8px rgba(0,0,0,0.2);
     display: none;
-    z-index: 4000;
   }
   .search-control.expanded .search-suggestions { display: block; }
   .suggestion-section { padding: 6px 6px 0 6px; font-size: 12px; color: #666; }
-  .suggestion-item {
-    padding: 6px 10px; font-size: 13px; cursor: pointer;
-    display: flex; justify-content: space-between; gap: 12px;
-  }
+  .suggestion-item { padding: 6px 10px; font-size: 13px; cursor: pointer; display: flex; justify-content: space-between; gap: 12px; }
   .suggestion-item:hover { background: #eef3ff; }
   .suggestion-meta { color: #666; font-size: 12px; }
-  `;
+
+  /* Mobile adjustments */
+  @media (max-width: 600px) {
+    .leaflet-control.search-control { padding: 4px; }
+    .search-icon-btn { width: 26px; height: 26px; }
+    .search-control.expanded .search-input { width: 160px; }
+    .search-suggestions { max-height: 50vh; }
+    /* Make vehicle filter checkboxes smaller */
+    #filters input[type="checkbox"] { transform: scale(0.9); transform-origin: left top; }
+    #filters label, #filters .filter-label { font-size: 12px; }
+    #filters { gap: 4px; }
+  }`;
   document.head.appendChild(style);
 })();
 
@@ -275,7 +293,10 @@ function normalizeRouteKey(s)   { return (s || "").toString().trim().replace(/\s
 function clearRouteHighlights() {
   Object.values(vehicleMarkers).forEach(m => {
     if (m._isRouteHighlighted) {
-      m.setStyle({ weight: 1 });
+      try {
+        if (typeof m.setRadius === "function" && m._baseRadius != null) m.setRadius(m._baseRadius);
+        m.setStyle({ weight: 1 });
+      } catch {}
       m._isRouteHighlighted = false;
     }
   });
@@ -285,12 +306,19 @@ function highlightMarkers(markers) {
   clearRouteHighlights();
   const bounds = [];
   markers.forEach(m => {
-    try { m.setStyle({ weight: 3 }); m._isRouteHighlighted = true; bounds.push(m.getLatLng()); } catch {}
+    try {
+      if (typeof m.setRadius === "function" && m._baseRadius != null) {
+        m.setRadius(m._baseRadius + 2); // enlarge slightly when highlighted
+      }
+      m.setStyle({ weight: 3 });
+      m._isRouteHighlighted = true;
+      bounds.push(m.getLatLng());
+    } catch {}
   });
   if (bounds.length > 0) map.fitBounds(L.latLngBounds(bounds), { padding: [40, 40] });
 }
 
-// Search logic that returns an object { type: 'fleet'|'route'|'none', markers: Marker[], exemplar?: Marker }
+// Search resolution { type: 'fleet'|'route'|'none', markers: [], exemplar? }
 function resolveQueryToMarkers(queryRaw) {
   const q = (queryRaw || "").trim();
   if (!q) return { type: "none", markers: [] };
@@ -314,8 +342,9 @@ function resolveQueryToMarkers(queryRaw) {
   return { type: "none", markers: [] };
 }
 
-// --- Search control with retract/expand and suggestions ---
+// --- Retractable Search control with suggestions ---
 const SearchControl = L.Control.extend({
+  options: { position: (window.innerWidth <= 600 ? "bottomright" : "topright") },
   onAdd: function () {
     const div = L.DomUtil.create("div", "leaflet-control search-control");
     const btn = L.DomUtil.create("button", "search-icon-btn", div);
@@ -326,12 +355,11 @@ const SearchControl = L.Control.extend({
 
     const input = L.DomUtil.create("input", "search-input", div);
     input.type = "text";
-    input.placeholder = "Fleet RT1234 or route 27";
+    input.placeholder = "search here";
 
     const sugg = L.DomUtil.create("div", "search-suggestions", div);
-    sugg.innerHTML = ""; // filled dynamically
+    sugg.innerHTML = "";
 
-    // prevent map interactions while using the control
     L.DomEvent.disableClickPropagation(div);
     L.DomEvent.disableScrollPropagation(div);
 
@@ -340,7 +368,6 @@ const SearchControl = L.Control.extend({
       input.focus();
       renderSuggestions(input.value);
     }
-
     function collapseAndReset() {
       input.value = "";
       sugg.innerHTML = "";
@@ -386,30 +413,24 @@ const SearchControl = L.Control.extend({
 
     // click outside collapses
     document.addEventListener("mousedown", onDocDown);
-    function onDocDown(ev) {
-      if (!div.classList.contains("expanded")) return;
-      if (!div.contains(ev.target)) collapseAndReset();
-    }
+    function onDocDown(ev) { if (div.classList.contains("expanded") && !div.contains(ev.target)) collapseAndReset(); }
 
     // suggestions rendering and click handling
     function renderSuggestions(raw) {
       const q = (raw || "").trim();
       if (!div.classList.contains("expanded")) return;
       if (!q) { sugg.innerHTML = ""; return; }
-
       const qNorm = q.replace(/\s+/g, "").toUpperCase();
 
-      // collect fleet suggestions: startsWith by normalized label
+      // fleets
       const fleetItems = [];
       for (const [label, marker] of vehicleIndexByFleet.entries()) {
         if (label.startsWith(qNorm)) {
-          const rName = marker.tripId ? (routes[Object.values(routes).find(r => r.route_short_name === (routes[marker.tripId]?.route_short_name))] || {}) : {};
           fleetItems.push({ kind: "fleet", label, marker });
           if (fleetItems.length >= 6) break;
         }
       }
-
-      // collect route suggestions: startsWith by route key
+      // routes
       const routeItems = [];
       for (const [rKey, set] of routeIndex.entries()) {
         if (rKey.startsWith(qNorm)) {
@@ -418,7 +439,6 @@ const SearchControl = L.Control.extend({
         }
       }
 
-      // build HTML
       const parts = [];
       if (fleetItems.length > 0) {
         parts.push(`<div class="suggestion-section">Fleets</div>`);
@@ -438,10 +458,9 @@ const SearchControl = L.Control.extend({
       }
       sugg.innerHTML = parts.join("") || "";
 
-      // item click
       sugg.querySelectorAll(".suggestion-item").forEach(el => {
         el.addEventListener("mousedown", ev => {
-          ev.preventDefault(); // keep focus
+          ev.preventDefault();
           const kind = el.getAttribute("data-kind");
           const id = el.getAttribute("data-id");
           if (kind === "fleet") {
@@ -450,9 +469,7 @@ const SearchControl = L.Control.extend({
               const ll = m.getLatLng();
               map.setView(ll, Math.max(map.getZoom(), 14));
               if (pinnedPopup && pinnedPopup !== m) pinnedPopup.closePopup();
-              pinnedPopup = m;
-              m.openPopup();
-              clearRouteHighlights();
+              pinnedPopup = m; m.openPopup(); clearRouteHighlights();
               input.value = id;
             }
           } else if (kind === "route") {
@@ -468,19 +485,16 @@ const SearchControl = L.Control.extend({
       });
     }
 
-    // expose for cleanup if the control is removed
     this._collapseAndReset = collapseAndReset;
     this._docHandler = onDocDown;
-
     return div;
   },
   onRemove: function () {
-    // in case we ever remove the control
     document.removeEventListener("mousedown", this._docHandler);
     if (typeof this._collapseAndReset === "function") this._collapseAndReset();
   }
 });
-map.addControl(new SearchControl({ position: "topright" }));
+map.addControl(new SearchControl());
 
 // --- Trips batch fetch with chunking and marker refresh ---
 async function fetchTripsBatch(tripIds) {
@@ -507,7 +521,6 @@ async function fetchTripsBatch(tripIds) {
         }
       });
 
-      // refresh any markers for these trips
       ids.forEach(tid => {
         const trip = tripCache[tid];
         if (!trip) return;
@@ -541,17 +554,13 @@ function pairAMTrains(inService, outOfService) {
     let bestMatch = null, bestDist = Infinity;
     outOfService.forEach(o => {
       if (usedOut.has(o.vehicleId)) return;
-      const dx = inTrain.lat - o.lat;
-      const dy = inTrain.lon - o.lon;
+      const dx = inTrain.lat - o.lat, dy = inTrain.lon - o.lon;
       const dist = Math.sqrt(dx*dx + dy*dy) * 111000;
       if (dist <= 200 && Math.abs(inTrain.speedKmh - o.speedKmh) <= 15) {
         if (dist < bestDist) { bestDist = dist; bestMatch = o; }
       }
     });
-    if (bestMatch) {
-      usedOut.add(bestMatch.vehicleId);
-      pairs.push({ inTrain, outTrain: bestMatch });
-    }
+    if (bestMatch) { usedOut.add(bestMatch.vehicleId); pairs.push({ inTrain, outTrain: bestMatch }); }
   });
 
   pairs.forEach(pair => {
@@ -624,7 +633,6 @@ async function fetchVehicles() {
     if (!json) return;
     if (json._rateLimited) { applyRateLimitBackoff(json.retryAfterMs, "realtime"); return; }
 
-    // decay backoff on success
     if (backoffMs) { backoffMs = Math.floor(backoffMs / 2); if (backoffMs < 5000) backoffMs = 0; }
     backoffUntilTs = 0;
 
@@ -660,14 +668,13 @@ async function fetchVehicles() {
       // Speed
       let speedKmh = null;
       let speedStr = "N/A";
+      const rIdTmp = v.vehicle?.trip?.route_id;
+      const rTypeTmp = routes[rIdTmp]?.route_type;
+      const isTrainTmp = rTypeTmp === 2;
+      const isFerryTmp = rTypeTmp === 4;
+      const isAM = vehicleLabel.startsWith("AM");
       if (v.vehicle.position.speed !== undefined) {
-        const rIdTmp = v.vehicle?.trip?.route_id;
-        const rTypeTmp = routes[rIdTmp]?.route_type;
-        const isTrainTmp = rTypeTmp === 2;
-        const isFerryTmp = rTypeTmp === 4;
-        const isAM = vehicleLabel.startsWith("AM");
-        speedKmh = (isTrainTmp || isFerryTmp || isAM) ? v.vehicle.position.speed * 3.6
-                                                      : v.vehicle.position.speed;
+        speedKmh = (isTrainTmp || isFerryTmp || isAM) ? v.vehicle.position.speed * 3.6 : v.vehicle.position.speed;
         if (isFerryTmp && speedKmh !== null) {
           const speedKnots = v.vehicle.position.speed * 1.94384;
           speedStr = `${speedKmh.toFixed(1)} km/h (${speedKnots.toFixed(1)} kn)`;
@@ -723,8 +730,7 @@ async function fetchVehicles() {
       let busType = vehicleMarkers[vehicleId]?.busType || "";
       const wasBus = vehicleMarkers[vehicleId]?.currentType === "bus";
       const isBusNow = typeKey === "bus";
-      const mustComputeBusType =
-        (isBusNow && !busType) || (isBusNow && !wasBus) || (!vehicleMarkers[vehicleId] && isBusNow);
+      const mustComputeBusType = (isBusNow && !busType) || (isBusNow && !wasBus) || (!vehicleMarkers[vehicleId] && isBusNow);
       if (mustComputeBusType && operator && vehicleNumber) {
         const model = getBusType(operator, vehicleNumber);
         if (model) busType = model;
@@ -745,7 +751,7 @@ async function fetchVehicles() {
         { currentType: typeKey, vehicleLabel, licensePlate, busType, speedStr, occupancy, bikesLine }
       );
 
-      // Build indexes
+      // Indexes
       if (vehicleLabel && typeKey !== "out") {
         vehicleIndexByFleet.set(normalizeFleetLabel(vehicleLabel), vehicleMarkers[vehicleId]);
       }
@@ -777,7 +783,6 @@ async function fetchVehicles() {
     setDebug(`Realtime update complete at ${new Date().toLocaleTimeString()}`);
     updateVehicleCount();
 
-    // Fill headsigns via trips
     await fetchTripsBatch([...new Set(allTripIds)]);
   } finally {
     vehiclesInFlight = false;
@@ -847,11 +852,10 @@ async function init() {
     busTypeIndex = buildBusTypeIndex(busTypesJson);
   }
 
-  // Render cached snapshot if present
   const cached = localStorage.getItem("realtimeSnapshot");
   if (cached) { try { renderFromCache(JSON.parse(cached)); } catch {} }
 
-  // Wire your external checkboxes
+  // Wire external checkboxes
   document.querySelectorAll('#filters input[type="checkbox"]').forEach(cb => {
     cb.addEventListener("change", e => {
       const layer = e.target.getAttribute("data-layer");
