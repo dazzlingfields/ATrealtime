@@ -1,6 +1,12 @@
-// ================== v4 - Realtime Vehicle Tracking ==================
+// ================== v4.54 - Realtime Vehicle Tracking ==================
+// Adds: retractable search control (icon until clicked), live suggestions below,
+// Enter to highlight, Escape to clear and collapse, click-out to collapse.
+// Keeps: visibility-aware polling with delayed pause, jittered 10–15 s,
+// anti-overlap, 429 backoff, chunked trips, fast bus-type lookup, immediate
+// headsigns, AM pairing, train line colours, semi-transparent popups,
+// hover-open and click-to-pin popups.
 
-// --- API endpoints 
+// --- API endpoints ---
 const proxyBaseUrl = "https://atrealtime.vercel.app";
 const realtimeUrl  = `${proxyBaseUrl}/api/realtime`;
 const routesUrl    = `${proxyBaseUrl}/api/routes`;
@@ -34,11 +40,11 @@ const map = L.map("map", {
   center: [-36.8485, 174.7633], zoom: 12, layers: [light], zoomControl: false
 });
 
-// Only base maps in control; your overlay checkboxes in HTML drive layer visibility
+// Only base maps in control; overlays toggled by your external checkboxes
 const baseMaps = { "Light": light, "Dark": dark, "OSM": osm, "Satellite": satellite, "Esri Hybrid": esriHybrid };
 L.control.layers(baseMaps, null).addTo(map);
 
-// Overlay groups exist, but are not shown in the Leaflet control
+// Overlay groups
 const vehicleLayers = {
   bus: L.layerGroup().addTo(map),
   train: L.layerGroup().addTo(map),
@@ -55,10 +61,10 @@ let busTypeIndex = {};
 const debugBox = document.getElementById("debug");
 
 // Search indexes (rebuilt every refresh)
-const vehicleIndexByFleet = new Map(); // key: normalized fleet label -> marker
-const routeIndex = new Map();          // key: normalized route short name -> Set<marker>
+const vehicleIndexByFleet = new Map(); // normalized fleet label -> marker
+const routeIndex = new Map();          // normalized route short name -> Set<marker>
 
-// Popup pinning state and map click-to-unpin and clear highlights
+// Popup pinning and map click-out to unpin and clear highlights
 let pinnedPopup = null;
 map.on("click", function () {
   if (pinnedPopup) { pinnedPopup.closePopup(); pinnedPopup = null; }
@@ -75,9 +81,7 @@ const occupancyLabels = [
 // --- Polling control ---
 const MIN_POLL_MS = 10000;
 const MAX_POLL_MS = 15000;
-function basePollDelay() {
-  return MIN_POLL_MS + Math.floor(Math.random() * (MAX_POLL_MS - MIN_POLL_MS + 1));
-}
+function basePollDelay() { return MIN_POLL_MS + Math.floor(Math.random() * (MAX_POLL_MS - MIN_POLL_MS + 1)); }
 
 // Backoff for 429
 let backoffMs = 0;
@@ -97,7 +101,6 @@ const HIDE_PAUSE_DELAY_MS = 10000;
 
 // --- Helpers ---
 function setDebug(msg) { if (debugBox) debugBox.textContent = msg; }
-
 function parseRetryAfterMs(value) {
   if (!value) return 0;
   const sec = Number(value);
@@ -106,19 +109,18 @@ function parseRetryAfterMs(value) {
   return isNaN(ts) ? 0 : Math.max(0, ts - Date.now());
 }
 
+// safeFetch: null on error; {_rateLimited:true,retryAfterMs} on 429
 async function safeFetch(url, opts = {}) {
   try {
     const res = await fetch(url, { cache: "no-store", ...opts });
     if (res.status === 429) {
       const retryAfterMs = parseRetryAfterMs(res.headers.get("Retry-After"));
-      let body = "";
-      try { body = await res.text(); } catch {}
+      let body = ""; try { body = await res.text(); } catch {}
       console.warn("429 Too Many Requests", { url, retryAfterMs, body: body?.slice(0, 200) });
       return { _rateLimited: true, retryAfterMs };
     }
     if (!res.ok) {
-      let body = "";
-      try { body = await res.text(); } catch {}
+      let body = ""; try { body = await res.text(); } catch {}
       const extra = body ? ` | ${body.slice(0, 200)}` : "";
       throw new Error(`${res.status} ${res.statusText}${extra}`);
     }
@@ -182,7 +184,7 @@ function addOrUpdateMarker(id, lat, lon, popupContent, color, type, tripId, fiel
     (vehicleLayers[type] || vehicleLayers.out).addLayer(m);
   } else {
     const marker = L.circleMarker([lat, lon], {
-      radius: isMobile ? 5 : 6, fillColor: color, color: "#000",
+      radius: isMobile ? 6 : 5, fillColor: color, color: "#000",
       weight: 1, opacity: 1, fillOpacity: 0.9
     });
     (vehicleLayers[type] || vehicleLayers.out).addLayer(marker);
@@ -216,44 +218,59 @@ function updateVehicleCount() {
   if (el) el.textContent = `Buses: ${busCount}, Trains: ${trainCount}, Ferries: ${ferryCount}`;
 }
 
-// --- Semi-transparent popup styling ---
-(function injectPopupStyle() {
+// --- Semi-transparent popup + search styles ---
+(function injectStyle() {
   const style = document.createElement("style");
   style.textContent = `
   .leaflet-popup-content-wrapper,
-  .leaflet-popup-tip {
-    background: rgba(255,255,255,0.85);
-    backdrop-filter: blur(4px);
-  }
-  .veh-highlight {
-    stroke: #333;
-    stroke-width: 3;
-  }
+  .leaflet-popup-tip { background: rgba(255,255,255,0.85); backdrop-filter: blur(4px); }
+
+  .veh-highlight { stroke: #333; stroke-width: 3; }
+
   .leaflet-control.search-control {
+    position: relative;
     background: rgba(255,255,255,0.9);
     padding: 6px;
     border-radius: 6px;
     box-shadow: 0 1px 3px rgba(0,0,0,0.25);
+    display: flex; align-items: center; gap: 6px;
   }
-  .search-control input {
-    width: 220px;
-    border: 1px solid #bbb;
-    border-radius: 4px;
-    padding: 4px 8px;
-    font-size: 13px;
-  }`;
+  .search-icon-btn {
+    width: 28px; height: 28px; border: 1px solid #bbb; border-radius: 4px;
+    display: inline-flex; align-items: center; justify-content: center; cursor: pointer;
+    background: white;
+  }
+  .search-icon-btn svg { width: 16px; height: 16px; }
+  .search-input {
+    width: 0;
+    opacity: 0;
+    border: 1px solid #bbb; border-radius: 4px; padding: 4px 8px; font-size: 13px;
+    transition: width 140ms ease, opacity 120ms ease;
+  }
+  .search-control.expanded .search-input { width: 220px; opacity: 1; }
+  .search-suggestions {
+    position: absolute; top: 100%; left: 0; right: 0;
+    background: rgba(255,255,255,0.97);
+    border: 1px solid #bbb; border-radius: 6px; margin-top: 6px; max-height: 240px; overflow: auto;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+    display: none;
+    z-index: 4000;
+  }
+  .search-control.expanded .search-suggestions { display: block; }
+  .suggestion-section { padding: 6px 6px 0 6px; font-size: 12px; color: #666; }
+  .suggestion-item {
+    padding: 6px 10px; font-size: 13px; cursor: pointer;
+    display: flex; justify-content: space-between; gap: 12px;
+  }
+  .suggestion-item:hover { background: #eef3ff; }
+  .suggestion-meta { color: #666; font-size: 12px; }
+  `;
   document.head.appendChild(style);
 })();
 
-// --- Search control ---
-function normalizeFleetLabel(s) {
-  if (!s) return "";
-  return s.toString().trim().replace(/\s+/g, "").toUpperCase();
-}
-function normalizeRouteKey(s) {
-  if (!s) return "";
-  return s.toString().trim().replace(/\s+/g, "").toUpperCase();
-}
+// --- Search helpers and highlighting ---
+function normalizeFleetLabel(s) { return (s || "").toString().trim().replace(/\s+/g, "").toUpperCase(); }
+function normalizeRouteKey(s)   { return (s || "").toString().trim().replace(/\s+/g, "").toUpperCase(); }
 
 function clearRouteHighlights() {
   Object.values(vehicleMarkers).forEach(m => {
@@ -264,81 +281,204 @@ function clearRouteHighlights() {
   });
 }
 
-function highlightRouteMarkers(markers) {
+function highlightMarkers(markers) {
   clearRouteHighlights();
   const bounds = [];
   markers.forEach(m => {
-    try {
-      m.setStyle({ weight: 3 });
-      m._isRouteHighlighted = true;
-      bounds.push(m.getLatLng());
-    } catch {}
+    try { m.setStyle({ weight: 3 }); m._isRouteHighlighted = true; bounds.push(m.getLatLng()); } catch {}
   });
   if (bounds.length > 0) map.fitBounds(L.latLngBounds(bounds), { padding: [40, 40] });
 }
 
-function performSearch(queryRaw) {
+// Search logic that returns an object { type: 'fleet'|'route'|'none', markers: Marker[], exemplar?: Marker }
+function resolveQueryToMarkers(queryRaw) {
   const q = (queryRaw || "").trim();
-  if (!q) { clearRouteHighlights(); return; }
+  if (!q) return { type: "none", markers: [] };
 
   const fleetCandidate = normalizeFleetLabel(q);
   const routeCandidate = normalizeRouteKey(q);
-
   const hasLetters = /[A-Z]/i.test(fleetCandidate);
   const hasDigits  = /\d/.test(fleetCandidate);
 
   if (hasLetters && hasDigits) {
     const m = vehicleIndexByFleet.get(fleetCandidate);
-    if (m) {
-      clearRouteHighlights();
-      const ll = m.getLatLng();
-      map.setView(ll, Math.max(map.getZoom(), 14));
-      if (pinnedPopup && pinnedPopup !== m) pinnedPopup.closePopup();
-      pinnedPopup = m;
-      m.openPopup();
-      return;
-    }
+    return m ? { type: "fleet", markers: [m], exemplar: m } : { type: "none", markers: [] };
   }
 
   const set = routeIndex.get(routeCandidate);
   if (set && set.size > 0) {
-    const list = Array.from(set);
-    highlightRouteMarkers(list);
-    const exemplar = list[0];
-    exemplar.openPopup();
-    return;
+    const markers = Array.from(set);
+    return { type: "route", markers, exemplar: markers[0] };
   }
 
-  clearRouteHighlights();
+  return { type: "none", markers: [] };
 }
 
+// --- Search control with retract/expand and suggestions ---
 const SearchControl = L.Control.extend({
   onAdd: function () {
     const div = L.DomUtil.create("div", "leaflet-control search-control");
-    const input = L.DomUtil.create("input", "", div);
+    const btn = L.DomUtil.create("button", "search-icon-btn", div);
+    btn.setAttribute("type", "button");
+    btn.setAttribute("title", "Search");
+    btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <circle cx="11" cy="11" r="7"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>`;
+
+    const input = L.DomUtil.create("input", "search-input", div);
     input.type = "text";
-    input.placeholder = "Find fleet RT1234 or route 27";
+    input.placeholder = "Fleet RT1234 or route 27";
+
+    const sugg = L.DomUtil.create("div", "search-suggestions", div);
+    sugg.innerHTML = ""; // filled dynamically
+
+    // prevent map interactions while using the control
     L.DomEvent.disableClickPropagation(div);
     L.DomEvent.disableScrollPropagation(div);
+
+    function expand() {
+      div.classList.add("expanded");
+      input.focus();
+      renderSuggestions(input.value);
+    }
+
+    function collapseAndReset() {
+      input.value = "";
+      sugg.innerHTML = "";
+      div.classList.remove("expanded");
+      clearRouteHighlights();
+      if (pinnedPopup) { pinnedPopup.closePopup(); pinnedPopup = null; }
+    }
+
+    btn.addEventListener("click", () => {
+      if (div.classList.contains("expanded")) collapseAndReset();
+      else expand();
+    });
 
     let debounceId = null;
     input.addEventListener("input", () => {
       if (debounceId) clearTimeout(debounceId);
-      debounceId = setTimeout(() => performSearch(input.value), 250);
+      debounceId = setTimeout(() => renderSuggestions(input.value), 180);
     });
+
     input.addEventListener("keydown", e => {
       if (e.key === "Enter") {
         e.preventDefault();
-        performSearch(input.value);
-      }
-      if (e.key === "Escape") {
-        input.value = "";
-        clearRouteHighlights();
+        const res = resolveQueryToMarkers(input.value);
+        if (res.type === "fleet") {
+          const m = res.exemplar;
+          const ll = m.getLatLng();
+          map.setView(ll, Math.max(map.getZoom(), 14));
+          if (pinnedPopup && pinnedPopup !== m) pinnedPopup.closePopup();
+          pinnedPopup = m;
+          m.openPopup();
+          clearRouteHighlights();
+        } else if (res.type === "route") {
+          highlightMarkers(res.markers);
+          if (res.exemplar) res.exemplar.openPopup();
+        } else {
+          clearRouteHighlights();
+        }
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        collapseAndReset();
       }
     });
+
+    // click outside collapses
+    document.addEventListener("mousedown", onDocDown);
+    function onDocDown(ev) {
+      if (!div.classList.contains("expanded")) return;
+      if (!div.contains(ev.target)) collapseAndReset();
+    }
+
+    // suggestions rendering and click handling
+    function renderSuggestions(raw) {
+      const q = (raw || "").trim();
+      if (!div.classList.contains("expanded")) return;
+      if (!q) { sugg.innerHTML = ""; return; }
+
+      const qNorm = q.replace(/\s+/g, "").toUpperCase();
+
+      // collect fleet suggestions: startsWith by normalized label
+      const fleetItems = [];
+      for (const [label, marker] of vehicleIndexByFleet.entries()) {
+        if (label.startsWith(qNorm)) {
+          const rName = marker.tripId ? (routes[Object.values(routes).find(r => r.route_short_name === (routes[marker.tripId]?.route_short_name))] || {}) : {};
+          fleetItems.push({ kind: "fleet", label, marker });
+          if (fleetItems.length >= 6) break;
+        }
+      }
+
+      // collect route suggestions: startsWith by route key
+      const routeItems = [];
+      for (const [rKey, set] of routeIndex.entries()) {
+        if (rKey.startsWith(qNorm)) {
+          routeItems.push({ kind: "route", rKey, count: set.size });
+          if (routeItems.length >= 6) break;
+        }
+      }
+
+      // build HTML
+      const parts = [];
+      if (fleetItems.length > 0) {
+        parts.push(`<div class="suggestion-section">Fleets</div>`);
+        fleetItems.forEach(it => {
+          parts.push(`<div class="suggestion-item" data-kind="fleet" data-id="${it.label}">
+              <span>${it.label}</span><span class="suggestion-meta">vehicle</span>
+            </div>`);
+        });
+      }
+      if (routeItems.length > 0) {
+        parts.push(`<div class="suggestion-section">Routes</div>`);
+        routeItems.forEach(it => {
+          parts.push(`<div class="suggestion-item" data-kind="route" data-id="${it.rKey}">
+              <span>${it.rKey}</span><span class="suggestion-meta">${it.count} vehicle${it.count===1?"":"s"}</span>
+            </div>`);
+        });
+      }
+      sugg.innerHTML = parts.join("") || "";
+
+      // item click
+      sugg.querySelectorAll(".suggestion-item").forEach(el => {
+        el.addEventListener("mousedown", ev => {
+          ev.preventDefault(); // keep focus
+          const kind = el.getAttribute("data-kind");
+          const id = el.getAttribute("data-id");
+          if (kind === "fleet") {
+            const m = vehicleIndexByFleet.get(id);
+            if (m) {
+              const ll = m.getLatLng();
+              map.setView(ll, Math.max(map.getZoom(), 14));
+              if (pinnedPopup && pinnedPopup !== m) pinnedPopup.closePopup();
+              pinnedPopup = m;
+              m.openPopup();
+              clearRouteHighlights();
+              input.value = id;
+            }
+          } else if (kind === "route") {
+            const set = routeIndex.get(id);
+            if (set && set.size > 0) {
+              const list = Array.from(set);
+              highlightMarkers(list);
+              list[0].openPopup();
+              input.value = id;
+            }
+          }
+        });
+      });
+    }
+
+    // expose for cleanup if the control is removed
+    this._collapseAndReset = collapseAndReset;
+    this._docHandler = onDocDown;
+
     return div;
   },
-  onRemove: function () {}
+  onRemove: function () {
+    // in case we ever remove the control
+    document.removeEventListener("mousedown", this._docHandler);
+    if (typeof this._collapseAndReset === "function") this._collapseAndReset();
+  }
 });
 map.addControl(new SearchControl({ position: "topright" }));
 
@@ -367,6 +507,7 @@ async function fetchTripsBatch(tripIds) {
         }
       });
 
+      // refresh any markers for these trips
       ids.forEach(tid => {
         const trip = tripCache[tid];
         if (!trip) return;
@@ -493,7 +634,7 @@ async function fetchVehicles() {
     const allTripIds = [];
     const cachedState = [];
 
-    // rebuild indexes
+    // rebuild search indexes
     vehicleIndexByFleet.clear();
     routeIndex.clear();
 
@@ -606,8 +747,7 @@ async function fetchVehicles() {
 
       // Build indexes
       if (vehicleLabel && typeKey !== "out") {
-        const key = normalizeFleetLabel(vehicleLabel);
-        if (key) vehicleIndexByFleet.set(key, vehicleMarkers[vehicleId]);
+        vehicleIndexByFleet.set(normalizeFleetLabel(vehicleLabel), vehicleMarkers[vehicleId]);
       }
       if (routes[routeId]?.route_short_name && typeKey !== "out") {
         const rKey = normalizeRouteKey(routes[routeId].route_short_name);
@@ -624,7 +764,7 @@ async function fetchVehicles() {
     // AM pairing
     pairAMTrains(inServiceAM, outOfServiceAM);
 
-    // Remove stale; unpin if removing pinned marker and clear from indexes
+    // Remove stale; unpin if removing pinned marker
     Object.keys(vehicleMarkers).forEach(id => {
       if (!newIds.has(id)) {
         if (pinnedPopup === vehicleMarkers[id]) pinnedPopup = null;
