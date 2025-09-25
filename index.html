@@ -8,36 +8,22 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
 
 <style>
-  /* =========================================================
-     System tokens
-     ========================================================= */
   :root{
-    /* surfaces */
     --panel-bg: rgba(255,255,255,0.82);
     --panel-border: rgba(60,60,67,0.18);
     --elev-1: 0 6px 16px rgba(0,0,0,0.12);
     --elev-2: 0 12px 28px rgba(0,0,0,0.18);
-
-    /* text */
     --text-strong: #1c1c1e;
     --text-subtle: #6e6e73;
-
-    /* brand accent */
     --accent: #0a84ff;
     --accent-weak: rgba(10,132,255,0.12);
-
-    /* radius */
     --r-xl: 20px;
     --r-lg: 14px;
     --r-md: 10px;
-
-    /* spacing */
     --gap-1: 6px;
     --gap-2: 10px;
     --gap-3: 14px;
     --gap-4: 16px;
-
-    /* misc */
     --glass-blur: 12px;
     --panel-backdrop: saturate(180%) blur(var(--glass-blur));
     --ring: 0 0 0 2px rgba(10,132,255,0.45);
@@ -49,24 +35,18 @@
       --panel-border: rgba(255,255,255,0.14);
       --elev-1: 0 8px 20px rgba(0,0,0,0.5);
       --elev-2: 0 16px 36px rgba(0,0,0,0.6);
-
       --text-strong: #f5f5f7;
       --text-subtle: #a1a1a6;
-
       --accent: #0a84ff;
       --accent-weak: rgba(10,132,255,0.18);
       --ring: 0 0 0 2px rgba(10,132,255,0.55);
     }
   }
 
-  /* Motion safety */
   @media (prefers-reduced-motion: reduce) {
     * { animation: none !important; transition: none !important; }
   }
 
-  /* =========================================================
-     Base
-     ========================================================= */
   html, body {
     margin: 0; padding: 0; width: 100%;
     overflow-x: hidden;
@@ -78,12 +58,8 @@
   }
   #map { height: 100vh; width: 100vw; }
 
-  /* Headings and small text scale */
   h4 { margin: 0 0 8px 0; font-weight: 700; letter-spacing: 0.2px; font-size: 17px; }
 
-  /* =========================================================
-     Left panel
-     ========================================================= */
   #controls {
     position: absolute; top: 12px; left: 12px; z-index: 1000;
     background: var(--panel-bg);
@@ -121,9 +97,6 @@
     font-size: 12px; color: var(--text-subtle); line-height: 1.35;
   }
 
-  /* =========================================================
-     Popups
-     ========================================================= */
   .leaflet-popup-content { font-size: 14px; line-height: 1.28; }
   .leaflet-popup-content-wrapper, .leaflet-popup-tip {
     background: var(--panel-bg);
@@ -134,15 +107,9 @@
     box-shadow: var(--elev-1);
   }
 
-  /* Keep top-right controls above left panel */
-  .leaflet-top.leaflet-right .leaflet-control { z-index: 2000; }
+  .leaflet-top.leaflet-right .leaflet-control { z-index: 4400; }
 
-  /* =========================================================
-     Search control
-     Structure expected:
-     .leaflet-control.search-wrapper > .search-control > [button.search-icon-btn][input.search-input][button.search-cancel]
-     ========================================================= */
-  .leaflet-control.search-wrapper { }
+  .leaflet-control.search-wrapper { margin-top: 10px; margin-right: 10px; }
 
   .leaflet-control.search-control {
     position: relative;
@@ -169,7 +136,6 @@
   .search-icon-btn:active { transform: scale(0.98); }
   .search-icon-btn svg { width: 16px; height: 16px; display: block; }
 
-  /* Use max-width + opacity for smoother retract/expand */
   .search-input {
     flex: 1 1 auto;
     max-width: 0; opacity: 0; overflow: hidden;
@@ -201,7 +167,6 @@
   .search-cancel:active { transform: scale(0.98); }
   .search-control.expanded .search-cancel { display: inline-flex; align-items: center; }
 
-  /* Suggestions */
   .search-suggestions {
     position: absolute; top: calc(100% + 6px); left: 0; right: 0;
     background: var(--panel-bg);
@@ -213,6 +178,7 @@
     display: none;
     overscroll-behavior: contain;
     -webkit-overflow-scrolling: touch;
+    z-index: 4500;
   }
   .search-control.expanded .search-suggestions { display: block; }
 
@@ -233,9 +199,6 @@
   .suggestion-item:hover, .suggestion-item:active { background: var(--accent-weak); }
   .suggestion-meta { color: var(--text-subtle); font-size: 12px; }
 
-  /* =========================================================
-     Utility: vehicle chip sizes (optional hooks used by your JS/HTML)
-     ========================================================= */
   .vehicle-chip {
     display: inline-flex; align-items: center; gap: 6px;
     padding: 4px 8px; border-radius: 999px;
@@ -246,50 +209,50 @@
     .vehicle-chip { background: rgba(255,255,255,0.08); }
   }
 
-  /* =========================================================
-     Mobile
-     ========================================================= */
   @media (max-width: 600px) {
+    .leaflet-control.search-wrapper {
+      margin-top: 56px;
+      margin-right: max(10px, env(safe-area-inset-right));
+    }
     #controls {
-      padding: 10px 12px; border-radius: 18px; max-width: 190px;
+      top: auto;
+      left: max(10px, env(safe-area-inset-left));
+      bottom: max(10px, env(safe-area-inset-bottom));
+      right: auto;
+      width: min(88vw, 360px);
+      max-width: none;
+      border-radius: 18px;
+      padding: 12px 14px;
+      box-shadow: var(--elev-2);
       gap: var(--gap-2);
+      transform: translateZ(0);
     }
     .control-group h4 { font-size: 16px; margin-bottom: 4px; }
-    #filters { gap: 6px; }
-    #filters label { padding: 6px 6px; font-size: 13px; column-gap: 8px; }
-    #filters input[type="checkbox"] { width: 18px; height: 18px; }
-
+    #filters { gap: 6px; grid-template-columns: 1fr; }
+    #filters label { padding: 8px 10px; font-size: 14px; column-gap: 10px; }
+    #filters input[type="checkbox"] { width: 20px; height: 20px; }
     .leaflet-popup-content { font-size: 12px; }
-
-    /* Search: larger targets, wider field when expanded, still retractable */
     .search-icon-btn { width: 34px; height: 34px; border-radius: 10px; }
-    .search-control.expanded .search-input {
-      max-width: min(72vw, 380px);
-      font-size: 16px; padding: 10px 12px;
-    }
-    .search-cancel {
-      display: none; /* JS can toggle while expanded */
-      height: 34px; padding: 0 12px; font-size: 15px;
-      border-radius: 10px;
-    }
-    .search-control.expanded .search-cancel {
-      display: inline-flex; align-items: center; justify-content: center;
-    }
+    .search-control.expanded .search-input { max-width: min(82vw, 380px); font-size: 16px; padding: 10px 12px; }
+    .search-cancel { display: none; height: 34px; padding: 0 12px; font-size: 15px; border-radius: 10px; }
+    .search-control.expanded .search-cancel { display: inline-flex; align-items: center; justify-content: center; }
     .search-suggestions { max-height: 56vh; }
-
-    /* Optional: smaller vehicle chip on mobile */
     .vehicle-chip { padding: 3px 7px; font-size: 11.5px; }
+    #vehicle-count, #debug { font-size: 12px; color: var(--text-subtle); margin-top: 8px; line-height: 1.3; }
+    #vehicle-count::before { content: ""; display: block; height: 1px; margin: 8px 0; background: var(--panel-border); }
   }
 
+  @media (max-width: 360px) {
+    #controls { width: min(92vw, 320px); padding: 10px 12px; border-radius: 16px; }
+    #filters input[type="checkbox"] { width: 18px; height: 18px; }
+    #filters label { font-size: 13px; padding: 7px 9px; }
+    .search-control.expanded .search-input { max-width: 78vw; }
+  }
 
   :where(button, [role="button"], input, .search-icon-btn, .search-cancel):focus-visible {
     outline: none; box-shadow: var(--ring);
   }
 </style>
-
-
-
-
 
 </head>
 <body>
@@ -316,6 +279,7 @@
 
 </body>
 </html>
+
 
 
 
