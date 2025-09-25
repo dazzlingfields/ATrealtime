@@ -1,6 +1,6 @@
 // ================== v4.60 - Realtime Vehicle Tracking ==================
 // Retractable but mobile-friendly search; larger touch targets; no accidental collapse.
-// Visibility-aware polling with delayed pause, jitter 10–15 s, anti-overlap,
+// Visibility-aware polling with delayed pause, jitter 10 to 15 s, anti-overlap,
 // 429 backoff, chunked trips, fast bus type lookup, immediate headsigns,
 // AM pairing, train line colours, hover-open + click-to-pin popups,
 // route highlight with slight marker enlargement, Apple-like UI.
@@ -38,7 +38,7 @@ let pinnedPopup=null;
 map.on("click",()=>{ if(pinnedPopup){pinnedPopup.closePopup(); pinnedPopup=null;} clearRouteHighlights(); });
 
 const vehicleColors={bus:"#4a90e2",train:"#d0021b",ferry:"#1abc9c",out:"#9b9b9b"};
-const trainLineColors={STH:"#d0021b",WEST:"#6aa84f",EAST:"#f8e71c",ONE:"#0e76a8"};
+const trainLineColors={STH:"#d0021b",WEST:"#7fbf6a",EAST:"#f8e71c",ONE:"#0e76a8"}; // WEST slightly lighter
 const occupancyLabels=["Empty","Many Seats Available","Few Seats Available","Standing Room Only","Limited Standing Room","Full","Not accepting passengers"];
 
 // --- Polling/backoff/visibility ---
@@ -113,9 +113,7 @@ function updateVehicleCount(){
 // --- Styles injected for popups (keep consistent with CSS file) ---
 (function injectExtraStyle(){
   const style=document.createElement("style");
-  style.textContent=`
-    .veh-highlight{stroke:#333;stroke-width:3;}
-  `;
+  style.textContent=`.veh-highlight{stroke:#333;stroke-width:3;}`;
   document.head.appendChild(style);
 })();
 
@@ -139,6 +137,34 @@ function highlightMarkers(markers){
   if(bounds.length>0) map.fitBounds(L.latLngBounds(bounds),{padding:[40,40]});
 }
 
+// Resolve a free text query to either a single fleet marker or a route set
+function resolveQueryToMarkers(raw){
+  const q=(raw||"").trim();
+  if(!q) return {type:"none"};
+  const fleetKey=normalizeFleetLabel(q);
+  if(vehicleIndexByFleet.has(fleetKey)){
+    return {type:"fleet", exemplar: vehicleIndexByFleet.get(fleetKey)};
+  }
+  const routeKey=normalizeRouteKey(q);
+  if(routeIndex.has(routeKey)){
+    const set=routeIndex.get(routeKey);
+    const list=[...set];
+    return {type:"route", markers:list, exemplar:list[0]||null};
+  }
+  // try partial prefix match for fleets
+  for(const [key,marker] of vehicleIndexByFleet.entries()){
+    if(key.startsWith(fleetKey)) return {type:"fleet", exemplar:marker};
+  }
+  // partial for routes
+  for(const [rk,set] of routeIndex.entries()){
+    if(rk.startsWith(routeKey)){
+      const list=[...set];
+      return {type:"route", markers:list, exemplar:list[0]||null};
+    }
+  }
+  return {type:"none"};
+}
+
 // --- Mobile-friendly retractable Search (still retracts) ---
 function isMobileScreen(){ return window.innerWidth <= 600; }
 // Do not disable map entirely; mobile still retracts. We only prevent accidental collapse.
@@ -157,7 +183,7 @@ const SearchControl=L.Control.extend({
     input.type="text"; input.placeholder="search here"; input.setAttribute("enterkeyhint","search");
 
     const cancel=L.DomUtil.create("button","search-cancel",div);
-    cancel.type="button"; cancel.textContent="Cancel"; // becomes visible only when expanded on mobile
+    cancel.type="button"; cancel.textContent="Cancel"; // visible only when expanded on mobile
 
     const sugg=L.DomUtil.create("div","search-suggestions",div);
 
@@ -172,10 +198,16 @@ const SearchControl=L.Control.extend({
       input.focus({ preventScroll:true });
       renderSuggestions(input.value);
     }
-    function collapse(){
+    // new collapse with option to preserve current popup
+    function collapse(opts = { preservePopup: false }) {
       div.classList.remove("expanded");
-      input.value=""; sugg.innerHTML=""; clearRouteHighlights();
-      if(pinnedPopup){ pinnedPopup.closePopup(); pinnedPopup=null; }
+      input.value = "";
+      sugg.innerHTML = "";
+      clearRouteHighlights();
+      if (!opts.preservePopup && pinnedPopup) {
+        pinnedPopup.closePopup();
+        pinnedPopup = null;
+      }
     }
 
     btn.addEventListener("click", ()=> {
@@ -184,11 +216,10 @@ const SearchControl=L.Control.extend({
     });
     cancel.addEventListener("click", ()=> collapse());
 
-    // Prevent blur from collapsing on mobile. We only collapse by Cancel, Esc, outside tap with delay, or after committing a result.
+    // Prevent blur from collapsing immediately on mobile
     let blurTimer=null;
     input.addEventListener("blur", ()=>{
       if(!div.classList.contains("expanded")) return;
-      // small grace period to allow tapping suggestions
       blurTimer=setTimeout(()=>{ if(div.classList.contains("expanded")) collapse(); }, 250);
     });
     input.addEventListener("focus", ()=> { if(blurTimer){ clearTimeout(blurTimer); blurTimer=null; } });
@@ -204,23 +235,29 @@ const SearchControl=L.Control.extend({
       if(e.key==="Enter"){
         e.preventDefault();
         const res=resolveQueryToMarkers(input.value);
-        if(res.type==="fleet"){
+        if(res.type==="fleet" && res.exemplar){
           const m=res.exemplar; const ll=m.getLatLng();
           map.setView(ll,Math.max(map.getZoom(),14));
           if(pinnedPopup&&pinnedPopup!==m) pinnedPopup.closePopup();
           pinnedPopup=m; m.openPopup(); clearRouteHighlights();
+          collapse({ preservePopup: true });
         }else if(res.type==="route"){
-          highlightMarkers(res.markers); res.exemplar?.openPopup();
+          highlightMarkers(res.markers);
+          if(res.exemplar){
+            pinnedPopup=res.exemplar;
+            res.exemplar.openPopup();
+          }
+          collapse({ preservePopup: true });
         }else{
           clearRouteHighlights();
+          collapse();
         }
-        collapse();
       }else if(e.key==="Escape"){
         e.preventDefault(); collapse();
       }
     });
 
-    // Desktop only: outside click collapses immediately. Mobile: allow a short delay so taps choose items.
+    // Desktop: outside click collapses immediately. Mobile: short delay so taps choose items.
     function onDocDown(ev){
       if(!div.classList.contains("expanded")) return;
       if(!wrapper.contains(ev.target)){
@@ -267,12 +304,29 @@ const SearchControl=L.Control.extend({
           const id=el.getAttribute("data-id");
           if(kind==="fleet"){
             const m=vehicleIndexByFleet.get(id);
-            if(m){ const ll=m.getLatLng(); map.setView(ll,Math.max(map.getZoom(),14)); if(pinnedPopup&&pinnedPopup!==m) pinnedPopup.closePopup(); pinnedPopup=m; m.openPopup(); clearRouteHighlights(); }
+            if(m){
+              const ll=m.getLatLng();
+              map.setView(ll,Math.max(map.getZoom(),14));
+              if(pinnedPopup&&pinnedPopup!==m) pinnedPopup.closePopup();
+              pinnedPopup=m; m.openPopup(); clearRouteHighlights();
+              collapse({ preservePopup: true });
+            }else{
+              collapse();
+            }
           }else if(kind==="route"){
             const set=routeIndex.get(id);
-            if(set&&set.size){ const list=[...set]; highlightMarkers(list); list[0].openPopup(); }
+            if(set&&set.size){
+              const list=[...set];
+              highlightMarkers(list);
+              pinnedPopup=list[0];
+              list[0].openPopup();
+              collapse({ preservePopup: true });
+            }else{
+              collapse();
+            }
+          }else{
+            collapse();
           }
-          collapse();
         },{passive:false});
       });
     }
@@ -436,7 +490,7 @@ function scheduleNextFetch(){
 function pauseUpdatesNow(){ pageVisible=false; if(pollTimeoutId){clearTimeout(pollTimeoutId); pollTimeoutId=null;} vehiclesAbort?.abort?.(); setDebug("Paused updates: tab not visible"); }
 function schedulePauseAfterHide(){ if(hidePauseTimerId) return; hidePauseTimerId=setTimeout(()=>{ hidePauseTimerId=null; if(document.hidden) pauseUpdatesNow(); },HIDE_PAUSE_DELAY_MS); }
 function cancelScheduledPause(){ if(hidePauseTimerId){clearTimeout(hidePauseTimerId); hidePauseTimerId=null;} }
-async function resumeUpdatesNow(){ cancelScheduledPause(); const wasHidden=!pageVisible; pageVisible=true; if(wasHidden){ setDebug("Tab visible. Refreshing…"); await fetchVehicles(); } scheduleNextFetch(); }
+async function resumeUpdatesNow(){ cancelScheduledPause(); const wasHidden=!pageVisible; pageVisible=true; if(wasHidden){ setDebug("Tab visible. Refreshing..."); await fetchVehicles(); } scheduleNextFetch(); }
 document.addEventListener("visibilitychange",()=>{ if(document.hidden) schedulePauseAfterHide(); else resumeUpdatesNow(); });
 
 // --- Init ---
