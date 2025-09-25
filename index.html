@@ -6,68 +6,119 @@
   <title>AT Realtime Map</title>
   <link rel="icon" type="image/x-icon" href="train.png">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
-
 <style>
-  body { font-family: Arial, sans-serif; margin: 0; padding: 0; }
-  #map { height: 100vh; width: 100vw; }
-  html, body { margin: 0; padding: 0; width: 100%; overflow-x: hidden; }
+  :root{
+    --panel-bg: rgba(255,255,255,0.86);
+    --panel-border: rgba(60,60,67,0.18);
+    --shadow: 0 8px 20px rgba(0,0,0,0.12);
+    --text-strong: #1c1c1e;
+    --text-subtle: #6e6e73;
+    --accent: #0a84ff; /* iOS blue */
+  }
 
-  /* Left controls (desktop defaults) */
+  /* Respect dark mode */
+  @media (prefers-color-scheme: dark) {
+    :root{
+      --panel-bg: rgba(28,28,30,0.78);
+      --panel-border: rgba(255,255,255,0.16);
+      --shadow: 0 10px 24px rgba(0,0,0,0.45);
+      --text-strong: #f5f5f7;
+      --text-subtle: #a1a1a6;
+      --accent: #0a84ff;
+    }
+  }
+
+  html, body {
+    margin: 0; padding: 0; width: 100%;
+    overflow-x: hidden;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+    color: var(--text-strong);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  #map { height: 100vh; width: 100vw; }
+
+  /* ===== Left panel: Apple-like card ===== */
   #controls {
-    position: absolute; top: 10px; left: 10px; z-index: 1000;
-    background: rgba(255,255,255,0.9);
-    padding: 15px; border-radius: 12px;
-    box-shadow: 0 4px 6px rgba(0,0,0,0.12);
+    position: absolute; top: 12px; left: 12px; z-index: 1000;
+    background: var(--panel-bg);
+    backdrop-filter: saturate(180%) blur(12px);
+    -webkit-backdrop-filter: saturate(180%) blur(12px);
+    border: 1px solid var(--panel-border);
+    border-radius: 20px;
+    box-shadow: var(--shadow);
+    padding: 14px 16px;
     max-width: 260px;
-    backdrop-filter: blur(2px);
   }
-  .control-group { margin-bottom: 14px; }
-  .control-group h4 { margin: 0 0 8px 0; font-size: 1.2em; color: #333; }
-  /* stack labels tightly but readable */
+
+  .control-group { margin: 0 0 10px 0; }
+  .control-group h4 {
+    margin: 0 0 8px 0;
+    font-weight: 700;
+    letter-spacing: 0.2px;
+    font-size: 18px;
+  }
+
+  /* Vehicle Display rows */
   #filters label {
-    display: flex; align-items: center; gap: 8px;
-    margin: 6px 0; font-size: 0.92em; color: #333; cursor: pointer;
+    display: flex; align-items: center;
+    gap: 10px;
+    margin: 6px 0;
+    font-size: 14px;
+    color: var(--text-strong);
+    cursor: pointer;
+    user-select: none;
   }
-  #filters input[type="checkbox"] { width: 16px; height: 16px; }
+  /* Use iOS accent color for checkboxes */
+  #filters input[type="checkbox"] {
+    width: 16px; height: 16px;
+    accent-color: var(--accent);
+    transform-origin: left top;
+  }
 
   #debug, #vehicle-count {
-    font-family: monospace; font-size: 0.82em; color: #777; margin-top: 10px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px;
+    color: var(--text-subtle);
+    margin-top: 8px;
+    line-height: 1.35;
   }
 
-  /* Leaflet popup tweaks */
-  .leaflet-popup-content { font-size: 14px; line-height: 1.2em; }
-  .leaflet-popup-content-wrapper, .leaflet-popup-tip {
-    background: rgba(255,255,255,0.85); backdrop-filter: blur(4px);
+  /* ===== Leaflet popups look glassy ===== */
+  .leaflet-popup-content { font-size: 14px; line-height: 1.25; }
+  .leaflet-popup-content-wrapper,
+  .leaflet-popup-tip {
+    background: var(--panel-bg);
+    backdrop-filter: saturate(180%) blur(12px);
+    -webkit-backdrop-filter: saturate(180%) blur(12px);
+    border: 1px solid var(--panel-border);
+    border-radius: 14px;
+    box-shadow: var(--shadow);
   }
 
-  /* Ensure top-right Leaflet controls (layers/search) sit above the left panel */
+  /* Ensure top-right Leaflet controls (layers, search) sit above left panel */
   .leaflet-top.leaflet-right .leaflet-control { z-index: 2000; }
 
-  /* --- Mobile-specific tweaks --- */
+  /* ===== Mobile tuning ===== */
   @media (max-width: 600px) {
-    /* Compact left panel */
     #controls {
-      padding: 8px 10px; max-width: 200px;
-      border-radius: 14px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);
-      background: rgba(255,255,255,0.92);
+      top: 10px; left: 10px;
+      padding: 10px 12px;
+      border-radius: 18px;
+      max-width: 178px;           /* smaller card on mobile */
     }
-    .control-group h4 { font-size: 1.05em; margin-bottom: 6px; }
-    #filters label { margin: 4px 0; font-size: 0.85em; gap: 6px; }
-    /* Smaller, tighter checkboxes */
+    .control-group h4 { font-size: 16px; margin-bottom: 6px; }
+    #filters label { margin: 4px 0; font-size: 13px; gap: 8px; }
     #filters input[type="checkbox"] {
       width: 14px; height: 14px;
-      transform: scale(0.9);
-      transform-origin: left top;
+      transform: scale(0.88);     /* smaller tick boxes */
     }
 
-    /* Leaflet layer control text size */
-    .leaflet-control-layers { font-size: 12px; padding: 2px 4px; }
-    .leaflet-control-layers-selector { transform: scale(0.85); margin-right: 2px; }
-
-    /* Popup readability on small screens */
-    .leaflet-popup-content { font-size: 12px; max-width: 200px !important; }
+    .leaflet-popup-content { font-size: 12px; }
   }
 </style>
+
 
 </head>
 <body>
@@ -94,5 +145,6 @@
 
 </body>
 </html>
+
 
 
