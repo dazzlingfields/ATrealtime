@@ -1,72 +1,73 @@
-let cacheBody = null, cacheExpiry = 0, inflight = null, blockUntil = 0;
-const TTL_MS = 10 * 60 * 1000;
-
+// api/routes.js
 export default async function handler(req, res) {
-  cors(res);
-  if (req.method === "OPTIONS") return res.status(204).end();
+  // CORS
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET,OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  if (req.method === "OPTIONS") return res.status(200).end();
+
+  const UPSTREAM_URL = "https://api.at.govt.nz/gtfs/v3/routes";
+  const REFRESH_MS = 10 * 60 * 1000;        // refresh every 10 minutes
+  const STALE_FALLBACK_MAX_MS = 24 * 60 * 60 * 1000; // serve stale up to 1 day
 
   const now = Date.now();
-  if (now < blockUntil) {
-    const retry = Math.ceil((blockUntil - now) / 1000);
-    res.setHeader("Retry-After", String(retry));
-    return res.status(429).json({ error: "Temporarily rate limited" });
+  globalThis.__AT_ROUTES__ ||= { data: null, ts: 0 };
+  const cache = globalThis.__AT_ROUTES__;
+
+  // fresh cache
+  if (cache.data && now - cache.ts < REFRESH_MS) {
+    setSWRHeaders(res, REFRESH_MS, 600); // small CDN window, long SWR
+    res.setHeader("x-cache", "routes-hit");
+    return res.status(200).json(cache.data);
   }
 
-  if (cacheBody && cacheExpiry > now) {
-    res.setHeader("Cache-Control", "public, max-age=60, s-maxage=60, stale-while-revalidate=300");
-    return res.status(200).type("application/json").send(cacheBody);
-  }
+  try {
+    const r = await fetch(UPSTREAM_URL, {
+      headers: { "Ocp-Apim-Subscription-Key": process.env.AT_API_KEY },
+      cache: "no-store"
+    });
 
-  if (inflight) {
-    try { const r = await inflight; return pipe(r, res); }
-    catch (e) { console.error(e); return res.status(502).json({ error: "Coalesced fetch failed" }); }
-  }
-
-  const qsIndex = req.url.indexOf("?");
-  const qs = qsIndex >= 0 ? req.url.slice(qsIndex) : "";
-  const upstreamUrl = `${process.env.UPSTREAM_ROUTES}${qs}`;
-
-  inflight = (async () => {
-    try {
-      const upstream = await fetch(upstreamUrl, {
-        cache: "no-store",
-        headers: { "Ocp-Apim-Subscription-Key": process.env.AT_API_KEY },
-      });
-
-      if (upstream.status === 429) {
-        const ra = upstream.headers.get("Retry-After");
-        const waitMs = parseRetryAfterMs(ra);
-        if (waitMs) blockUntil = Date.now() + waitMs;
-        const body = await upstream.text();
-        return new Response(body, { status: 429, headers: { "Content-Type": "application/json", "Retry-After": ra ?? "15" } });
+    if (r.status === 403 || r.status === 429) {
+      const body = await safeBody(r);
+      if (cache.data && now - cache.ts <= STALE_FALLBACK_MAX_MS) {
+        setSWRHeaders(res, REFRESH_MS, 600);
+        res.setHeader("x-cache", "routes-stale-hit");
+        res.setHeader("x-upstream-status", String(r.status));
+        return res.status(200).json(cache.data);
       }
-
-      if (!upstream.ok) {
-        const text = await upstream.text();
-        return new Response(JSON.stringify({ error: `Upstream error: ${upstream.status}`, body: text.slice(0, 500) }), {
-          status: 502, headers: { "Content-Type": "application/json" }
-        });
-      }
-
-      const body = await upstream.text();
-      cacheBody = body; cacheExpiry = Date.now() + TTL_MS;
-
-      return new Response(body, {
-        status: 200,
-        headers: { "Content-Type": "application/json", "Cache-Control": "public, max-age=60, s-maxage=60, stale-while-revalidate=300" }
-      });
-    } catch (e) {
-      console.error("routes upstream error", e);
-      return new Response(JSON.stringify({ error: "Function threw" }), { status: 500, headers: { "Content-Type": "application/json" } });
-    } finally {
-      inflight = null;
+      return res.status(502).json({ error: `Upstream error: ${r.status}`, body });
     }
-  })();
 
-  const resp = await inflight;
-  return pipe(resp, res);
+    if (!r.ok) {
+      const body = await safeBody(r);
+      if (cache.data && now - cache.ts <= STALE_FALLBACK_MAX_MS) {
+        setSWRHeaders(res, REFRESH_MS, 600);
+        res.setHeader("x-cache", "routes-stale-hit");
+        res.setHeader("x-upstream-status", String(r.status));
+        return res.status(200).json(cache.data);
+      }
+      return res.status(502).json({ error: `Upstream error: ${r.status}`, body });
+    }
+
+    const data = await r.json();           // pass through as-is
+    cache.data = data;
+    cache.ts = now;
+
+    setSWRHeaders(res, REFRESH_MS, 600);
+    res.setHeader("x-cache", "routes-miss");
+    return res.status(200).json(data);
+  } catch (err) {
+    if (cache.data && now - cache.ts <= STALE_FALLBACK_MAX_MS) {
+      setSWRHeaders(res, REFRESH_MS, 600);
+      res.setHeader("x-cache", "routes-stale-hit");
+      return res.status(200).json(cache.data);
+    }
+    return res.status(500).json({ error: `Proxy error: ${err.message}` });
+  }
 }
 
-function pipe(r, res){ for (const [k,v] of r.headers.entries()) res.setHeader(k,v); res.status(r.status); return r.text().then(t=>res.send(t)); }
-function parseRetryAfterMs(v){ if(!v) return 0; const n=Number(v); if(!Number.isNaN(n)) return Math.max(0,Math.floor(n*1000)); const t=Date.parse(v); return Number.isNaN(t)?0:Math.max(0,t-Date.now()); }
-function cors(res){ res.setHeader("Access-Control-Allow-Origin","*"); res.setHeader("Access-Control-Allow-Methods","GET,OPTIONS"); res.setHeader("Access-Control-Allow-Headers","Content-Type, Authorization"); return res; }
+function setSWRHeaders(res, refreshMs, swrSeconds) {
+  const sMaxAge = Math.max(1, Math.floor(refreshMs / 1000));
+  res.setHeader("Cache-Control", `s-maxage=${sMaxAge}, stale-while-revalidate=${swrSeconds}`);
+}
+async function safeBody(r) { try { return await r.text(); } catch { return ""; } }
