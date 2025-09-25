@@ -1,12 +1,6 @@
-// ================== v4.52 - Realtime Vehicle Tracking ==================
-// Changes:
-// - Hover opens popup; click pins until clicking elsewhere or another vehicle
-// - When tab becomes hidden: wait ~10 s, then pause polling; resume with immediate refresh on visible
-// - Keeps: jittered 10–15 s polling, anti-overlap, 429 backoff, chunked trips,
-//          bus-type lookup, immediate headsign updates, AM pairing, train line colours,
-//          semi-transparent popups, overlays controlled via your own HTML (not Leaflet control)
+// ================== v4 - Realtime Vehicle Tracking ==================
 
-// --- API endpoints ---
+// --- API endpoints 
 const proxyBaseUrl = "https://atrealtime.vercel.app";
 const realtimeUrl  = `${proxyBaseUrl}/api/realtime`;
 const routesUrl    = `${proxyBaseUrl}/api/routes`;
@@ -60,10 +54,15 @@ let busTypes = {};
 let busTypeIndex = {};
 const debugBox = document.getElementById("debug");
 
-// Popup pinning state and map click-to-unpin
+// Search indexes (rebuilt every refresh)
+const vehicleIndexByFleet = new Map(); // key: normalized fleet label -> marker
+const routeIndex = new Map();          // key: normalized route short name -> Set<marker>
+
+// Popup pinning state and map click-to-unpin and clear highlights
 let pinnedPopup = null;
 map.on("click", function () {
   if (pinnedPopup) { pinnedPopup.closePopup(); pinnedPopup = null; }
+  clearRouteHighlights();
 });
 
 const vehicleColors = { bus: "#4a90e2", train: "#d0021b", ferry: "#1abc9c", out: "#9b9b9b" };
@@ -82,8 +81,8 @@ function basePollDelay() {
 
 // Backoff for 429
 let backoffMs = 0;
-const BACKOFF_START_MS = 30000;           // first backoff 30 s (or Retry-After if larger)
-const BACKOFF_MAX_MS = 5 * 60 * 1000;     // cap at 5 min
+const BACKOFF_START_MS = 30000;
+const BACKOFF_MAX_MS = 5 * 60 * 1000;
 let backoffUntilTs = 0;
 
 // Anti-overlap and visibility flags
@@ -107,7 +106,6 @@ function parseRetryAfterMs(value) {
   return isNaN(ts) ? 0 : Math.max(0, ts - Date.now());
 }
 
-// safeFetch: returns null on network/other errors; returns {_rateLimited:true,retryAfterMs} on 429
 async function safeFetch(url, opts = {}) {
   try {
     const res = await fetch(url, { cache: "no-store", ...opts });
@@ -168,7 +166,7 @@ function buildPopup(routeName, destination, vehicleLabel, busType, licensePlate,
   `;
 }
 
-// --- Marker creation/update with hover-open, click-to-pin, and unpin on map click ---
+// --- Marker creation/update with hover-open and click-to-pin ---
 function addOrUpdateMarker(id, lat, lon, popupContent, color, type, tripId, fields = {}) {
   const isMobile = window.innerWidth <= 600;
   const popupOpts = { maxWidth: isMobile ? 200 : 250, className: "vehicle-popup" };
@@ -191,17 +189,14 @@ function addOrUpdateMarker(id, lat, lon, popupContent, color, type, tripId, fiel
     marker.bindPopup(popupContent, popupOpts);
 
     if (!marker._eventsBound) {
-      // Hover opens when not pinned
       marker.on("mouseover", function () { if (pinnedPopup !== this) this.openPopup(); });
-      // Mouseout closes when not pinned
       marker.on("mouseout", function () { if (pinnedPopup !== this) this.closePopup(); });
-      // Click pins; clicking another marker switches the pin
       marker.on("click", function (e) {
         if (pinnedPopup && pinnedPopup !== this) pinnedPopup.closePopup();
         pinnedPopup = this;
         this.openPopup();
         if (e && e.originalEvent && typeof e.originalEvent.stopPropagation === "function") {
-          e.originalEvent.stopPropagation(); // avoid immediate unpin from map click
+          e.originalEvent.stopPropagation();
         }
       });
       marker._eventsBound = true;
@@ -229,9 +224,123 @@ function updateVehicleCount() {
   .leaflet-popup-tip {
     background: rgba(255,255,255,0.85);
     backdrop-filter: blur(4px);
+  }
+  .veh-highlight {
+    stroke: #333;
+    stroke-width: 3;
+  }
+  .leaflet-control.search-control {
+    background: rgba(255,255,255,0.9);
+    padding: 6px;
+    border-radius: 6px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.25);
+  }
+  .search-control input {
+    width: 220px;
+    border: 1px solid #bbb;
+    border-radius: 4px;
+    padding: 4px 8px;
+    font-size: 13px;
   }`;
   document.head.appendChild(style);
 })();
+
+// --- Search control ---
+function normalizeFleetLabel(s) {
+  if (!s) return "";
+  return s.toString().trim().replace(/\s+/g, "").toUpperCase();
+}
+function normalizeRouteKey(s) {
+  if (!s) return "";
+  return s.toString().trim().replace(/\s+/g, "").toUpperCase();
+}
+
+function clearRouteHighlights() {
+  Object.values(vehicleMarkers).forEach(m => {
+    if (m._isRouteHighlighted) {
+      m.setStyle({ weight: 1 });
+      m._isRouteHighlighted = false;
+    }
+  });
+}
+
+function highlightRouteMarkers(markers) {
+  clearRouteHighlights();
+  const bounds = [];
+  markers.forEach(m => {
+    try {
+      m.setStyle({ weight: 3 });
+      m._isRouteHighlighted = true;
+      bounds.push(m.getLatLng());
+    } catch {}
+  });
+  if (bounds.length > 0) map.fitBounds(L.latLngBounds(bounds), { padding: [40, 40] });
+}
+
+function performSearch(queryRaw) {
+  const q = (queryRaw || "").trim();
+  if (!q) { clearRouteHighlights(); return; }
+
+  const fleetCandidate = normalizeFleetLabel(q);
+  const routeCandidate = normalizeRouteKey(q);
+
+  const hasLetters = /[A-Z]/i.test(fleetCandidate);
+  const hasDigits  = /\d/.test(fleetCandidate);
+
+  if (hasLetters && hasDigits) {
+    const m = vehicleIndexByFleet.get(fleetCandidate);
+    if (m) {
+      clearRouteHighlights();
+      const ll = m.getLatLng();
+      map.setView(ll, Math.max(map.getZoom(), 14));
+      if (pinnedPopup && pinnedPopup !== m) pinnedPopup.closePopup();
+      pinnedPopup = m;
+      m.openPopup();
+      return;
+    }
+  }
+
+  const set = routeIndex.get(routeCandidate);
+  if (set && set.size > 0) {
+    const list = Array.from(set);
+    highlightRouteMarkers(list);
+    const exemplar = list[0];
+    exemplar.openPopup();
+    return;
+  }
+
+  clearRouteHighlights();
+}
+
+const SearchControl = L.Control.extend({
+  onAdd: function () {
+    const div = L.DomUtil.create("div", "leaflet-control search-control");
+    const input = L.DomUtil.create("input", "", div);
+    input.type = "text";
+    input.placeholder = "Find fleet RT1234 or route 27";
+    L.DomEvent.disableClickPropagation(div);
+    L.DomEvent.disableScrollPropagation(div);
+
+    let debounceId = null;
+    input.addEventListener("input", () => {
+      if (debounceId) clearTimeout(debounceId);
+      debounceId = setTimeout(() => performSearch(input.value), 250);
+    });
+    input.addEventListener("keydown", e => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        performSearch(input.value);
+      }
+      if (e.key === "Escape") {
+        input.value = "";
+        clearRouteHighlights();
+      }
+    });
+    return div;
+  },
+  onRemove: function () {}
+});
+map.addControl(new SearchControl({ position: "topright" }));
 
 // --- Trips batch fetch with chunking and marker refresh ---
 async function fetchTripsBatch(tripIds) {
@@ -258,7 +367,6 @@ async function fetchTripsBatch(tripIds) {
         }
       });
 
-      // refresh any markers for these trips
       ids.forEach(tid => {
         const trip = tripCache[tid];
         if (!trip) return;
@@ -385,6 +493,10 @@ async function fetchVehicles() {
     const allTripIds = [];
     const cachedState = [];
 
+    // rebuild indexes
+    vehicleIndexByFleet.clear();
+    routeIndex.clear();
+
     vehicles.forEach(v => {
       const vehicleId = v.vehicle?.vehicle?.id;
       if (!v.vehicle || !v.vehicle.position || !vehicleId) return;
@@ -395,7 +507,9 @@ async function fetchVehicles() {
       const vehicleLabel = v.vehicle.vehicle?.label || "N/A";
       const licensePlate = v.vehicle.vehicle?.license_plate || "N/A";
 
-      const operator = v.vehicle.vehicle?.operator_id || (vehicleLabel.match(/^[A-Za-z]+/)?.[0] ?? "") || "";
+      const operator = v.vehicle.vehicle?.operator_id
+        || (vehicleLabel.match(/^[A-Za-z]+/)?.[0] ?? "")
+        || "";
       const vehicleNumber = (() => {
         const digits = Number(vehicleLabel.replace(/\D/g, ""));
         if (!isNaN(digits) && digits > 0) return digits;
@@ -428,7 +542,7 @@ async function fetchVehicles() {
         if (idx >= 0 && idx <= 6) occupancy = occupancyLabels[idx];
       }
 
-      // Classification and line colours
+      // Classification and colours
       let typeKey = "out", color = vehicleColors.out;
       let routeName = "Out of Service", destination = "Unknown";
       const routeId = v.vehicle?.trip?.route_id;
@@ -490,6 +604,17 @@ async function fetchVehicles() {
         { currentType: typeKey, vehicleLabel, licensePlate, busType, speedStr, occupancy, bikesLine }
       );
 
+      // Build indexes
+      if (vehicleLabel && typeKey !== "out") {
+        const key = normalizeFleetLabel(vehicleLabel);
+        if (key) vehicleIndexByFleet.set(key, vehicleMarkers[vehicleId]);
+      }
+      if (routes[routeId]?.route_short_name && typeKey !== "out") {
+        const rKey = normalizeRouteKey(routes[routeId].route_short_name);
+        if (!routeIndex.has(rKey)) routeIndex.set(rKey, new Set());
+        routeIndex.get(rKey).add(vehicleMarkers[vehicleId]);
+      }
+
       cachedState.push({
         vehicleId, lat, lon, popupContent, color, typeKey, tripId, ts: Date.now(),
         vehicleLabel, licensePlate, busType, speedStr, occupancy, bikesLine
@@ -499,7 +624,7 @@ async function fetchVehicles() {
     // AM pairing
     pairAMTrains(inServiceAM, outOfServiceAM);
 
-    // Remove stale; unpin if removing pinned marker
+    // Remove stale; unpin if removing pinned marker and clear from indexes
     Object.keys(vehicleMarkers).forEach(id => {
       if (!newIds.has(id)) {
         if (pinnedPopup === vehicleMarkers[id]) pinnedPopup = null;
@@ -538,42 +663,24 @@ function pauseUpdatesNow() {
   vehiclesAbort?.abort?.();
   setDebug("Paused updates: tab not visible");
 }
-
 function schedulePauseAfterHide() {
-  if (hidePauseTimerId) return; // already scheduled
+  if (hidePauseTimerId) return;
   hidePauseTimerId = setTimeout(() => {
     hidePauseTimerId = null;
-    // If still hidden after the delay, pause now
     if (document.hidden) pauseUpdatesNow();
   }, HIDE_PAUSE_DELAY_MS);
 }
-
-function cancelScheduledPause() {
-  if (hidePauseTimerId) {
-    clearTimeout(hidePauseTimerId);
-    hidePauseTimerId = null;
-  }
-}
-
+function cancelScheduledPause() { if (hidePauseTimerId) { clearTimeout(hidePauseTimerId); hidePauseTimerId = null; } }
 async function resumeUpdatesNow() {
   cancelScheduledPause();
   const wasHidden = !pageVisible;
   pageVisible = true;
-  if (wasHidden) {
-    setDebug("Tab visible. Refreshing…");
-    await fetchVehicles(); // immediate refresh on focus
-  }
+  if (wasHidden) { setDebug("Tab visible. Refreshing…"); await fetchVehicles(); }
   scheduleNextFetch();
 }
-
 document.addEventListener("visibilitychange", () => {
-  if (document.hidden) {
-    // Do not stop immediately; wait ~10 s to allow quick tab switches without pausing
-    schedulePauseAfterHide();
-  } else {
-    // Visible again; cancel any pending pause and resume
-    resumeUpdatesNow();
-  }
+  if (document.hidden) schedulePauseAfterHide();
+  else resumeUpdatesNow();
 });
 
 // --- Init ---
