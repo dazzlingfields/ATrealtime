@@ -1,8 +1,9 @@
-// ================== v4.56 - Realtime Vehicle Tracking ==================
-// Mobile UX: search stays top-right; Vehicle Display checkboxes compact on mobile.
-// Keeps: retractable search w/ suggestions, hover-open + click-to-pin, route highlight
-// w/ enlarged markers, visibility-aware polling, jitter 10–15 s, 429 backoff, trips
-// chunking, fast bus-type lookup, immediate headsigns, AM pairing, train line colours.
+// ================== v4.60 - Realtime Vehicle Tracking ==================
+// Retractable but mobile-friendly search; larger touch targets; no accidental collapse.
+// Visibility-aware polling with delayed pause, jitter 10–15 s, anti-overlap,
+// 429 backoff, chunked trips, fast bus type lookup, immediate headsigns,
+// AM pairing, train line colours, hover-open + click-to-pin popups,
+// route highlight with slight marker enlargement, Apple-like UI.
 
 // --- API endpoints ---
 const proxyBaseUrl = "https://atrealtime.vercel.app";
@@ -24,7 +25,7 @@ const map = L.map("map",{center:[-36.8485,174.7633],zoom:12,layers:[light],zoomC
 const baseMaps = {"Light":light,"Dark":dark,"OSM":osm,"Satellite":satellite,"Esri Hybrid":esriHybrid};
 L.control.layers(baseMaps,null).addTo(map);
 
-// Overlays (toggled by external #filters panel)
+// Overlays toggled by your HTML panel
 const vehicleLayers={bus:L.layerGroup().addTo(map),train:L.layerGroup().addTo(map),ferry:L.layerGroup().addTo(map),out:L.layerGroup().addTo(map)};
 
 // --- Data/state ---
@@ -34,7 +35,6 @@ let routes={}, busTypes={}, busTypeIndex={};
 const vehicleIndexByFleet=new Map(), routeIndex=new Map();
 const debugBox=document.getElementById("debug");
 let pinnedPopup=null;
-
 map.on("click",()=>{ if(pinnedPopup){pinnedPopup.closePopup(); pinnedPopup=null;} clearRouteHighlights(); });
 
 const vehicleColors={bus:"#4a90e2",train:"#d0021b",ferry:"#1abc9c",out:"#9b9b9b"};
@@ -54,7 +54,7 @@ function parseRetryAfterMs(v){ if(!v) return 0; const s=Number(v); if(!isNaN(s))
 async function safeFetch(url,opts={}){
   try{
     const res=await fetch(url,{cache:"no-store",...opts});
-    if(res.status===429){const retryAfterMs=parseRetryAfterMs(res.headers.get("Retry-After")); let body=""; try{body=await res.text();}catch{} return {_rateLimited:true,retryAfterMs};}
+    if(res.status===429){const retryAfterMs=parseRetryAfterMs(res.headers.get("Retry-After")); return {_rateLimited:true,retryAfterMs};}
     if(!res.ok){let body=""; try{body=await res.text();}catch{} throw new Error(`${res.status} ${res.statusText}${body?` | ${body.slice(0,200)}`:""}`);}
     return await res.json();
   }catch(err){console.error("Fetch error:",err); setDebug(`Fetch error: ${err.message}`); return null;}
@@ -80,7 +80,7 @@ function buildPopup(routeName,destination,vehicleLabel,busType,licensePlate,spee
 // --- Marker creation/update (hover open, click pin) ---
 function addOrUpdateMarker(id,lat,lon,popupContent,color,type,tripId,fields={}){
   const isMobile=window.innerWidth<=600;
-  const baseRadius=isMobile?4:5; // slightly smaller default
+  const baseRadius=isMobile?4:5;
   const popupOpts={maxWidth:isMobile?200:250,className:"vehicle-popup"};
 
   if(vehicleMarkers[id]){
@@ -103,7 +103,6 @@ function addOrUpdateMarker(id,lat,lon,popupContent,color,type,tripId,fields={}){
     marker.tripId=tripId; Object.assign(marker,fields); vehicleMarkers[id]=marker;
   }
 }
-
 function updateVehicleCount(){
   const busCount=Object.values(vehicleMarkers).filter(m=>vehicleLayers.bus.hasLayer(m)).length;
   const trainCount=Object.values(vehicleMarkers).filter(m=>vehicleLayers.train.hasLayer(m)).length;
@@ -111,55 +110,18 @@ function updateVehicleCount(){
   const el=document.getElementById("vehicle-count"); if(el) el.textContent=`Buses: ${busCount}, Trains: ${trainCount}, Ferries: ${ferryCount}`;
 }
 
-// --- Style injection: popups, search, and mobile-optimized #filters panel ---
-(function injectStyle(){
+// --- Styles injected for popups (keep consistent with CSS file) ---
+(function injectExtraStyle(){
   const style=document.createElement("style");
   style.textContent=`
-  .leaflet-popup-content-wrapper,.leaflet-popup-tip{background:rgba(255,255,255,0.85);backdrop-filter:blur(4px);}
-  .veh-highlight{stroke:#333;stroke-width:3;}
-
-  /* Search control stays top-right on all screens */
-  .leaflet-control.search-control{position:relative;background:rgba(255,255,255,0.9);padding:6px;border-radius:6px;box-shadow:0 1px 3px rgba(0,0,0,.25);display:flex;align-items:center;gap:6px;z-index:4000;}
-  .search-icon-btn{width:28px;height:28px;border:1px solid #bbb;border-radius:4px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;background:white;}
-  .search-icon-btn svg{width:16px;height:16px;}
-  .search-input{width:0;opacity:0;border:1px solid #bbb;border-radius:4px;padding:4px 8px;font-size:13px;transition:width .14s ease,opacity .12s ease;}
-  .search-control.expanded .search-input{width:220px;opacity:1;}
-  .search-suggestions{position:absolute;top:100%;left:0;right:0;background:rgba(255,255,255,.97);border:1px solid #bbb;border-radius:6px;margin-top:6px;max-height:240px;overflow:auto;box-shadow:0 2px 8px rgba(0,0,0,.2);display:none;}
-  .search-control.expanded .search-suggestions{display:block;}
-  .suggestion-section{padding:6px 6px 0 6px;font-size:12px;color:#666;}
-  .suggestion-item{padding:6px 10px;font-size:13px;cursor:pointer;display:flex;justify-content:space-between;gap:12px;}
-  .suggestion-item:hover{background:#eef3ff;}
-  .suggestion-meta{color:#666;font-size:12px;}
-
-  /* Mobile: compact search plus compact Vehicle Display card */
-  @media (max-width:600px){
-    .leaflet-control.search-control{padding:4px;}
-    .search-icon-btn{width:26px;height:26px;}
-    .search-control.expanded .search-input{width:170px;}
-    .search-suggestions{max-height:50vh;}
-
-    /* #filters card compaction */
-    #filters{
-      font-size:13px;
-      padding:8px 10px;
-      border-radius:14px;
-      box-shadow:0 1px 6px rgba(0,0,0,.15);
-      background:rgba(255,255,255,0.92);
-      max-width:min(86vw,320px);
-    }
-    #filters h2{font-size:20px;margin:0 0 6px 0;}
-    #filters .row{display:flex;align-items:center;gap:8px;margin:6px 0;}
-    #filters input[type="checkbox"]{transform:scale(.9);transform-origin:left top;}
-    #filters label{font-size:13px;line-height:1.2;}
-    #filters .meta{font-size:12px;opacity:.8;}
-  }`;
+    .veh-highlight{stroke:#333;stroke-width:3;}
+  `;
   document.head.appendChild(style);
 })();
 
 // --- Search helpers and highlighting ---
 function normalizeFleetLabel(s){return (s||"").toString().trim().replace(/\s+/g,"").toUpperCase();}
 function normalizeRouteKey(s){return (s||"").toString().trim().replace(/\s+/g,"").toUpperCase();}
-
 function clearRouteHighlights(){
   Object.values(vehicleMarkers).forEach(m=>{
     if(m._isRouteHighlighted){
@@ -176,75 +138,149 @@ function highlightMarkers(markers){
   });
   if(bounds.length>0) map.fitBounds(L.latLngBounds(bounds),{padding:[40,40]});
 }
-function resolveQueryToMarkers(qRaw){
-  const q=(qRaw||"").trim(); if(!q) return {type:"none",markers:[]};
-  const fleet=normalizeFleetLabel(q), route=normalizeRouteKey(q);
-  const hasLetters=/[A-Z]/i.test(fleet), hasDigits=/\d/.test(fleet);
-  if(hasLetters && hasDigits){ const m=vehicleIndexByFleet.get(fleet); return m?{type:"fleet",markers:[m],exemplar:m}:{type:"none",markers:[]}; }
-  const set=routeIndex.get(route); if(set && set.size>0){ const arr=[...set]; return {type:"route",markers:arr,exemplar:arr[0]}; }
-  return {type:"none",markers:[]};
-}
 
-// --- Retractable search (top-right), placeholder "search here" ---
+// --- Mobile-friendly retractable Search (still retracts) ---
+function isMobileScreen(){ return window.innerWidth <= 600; }
+// Do not disable map entirely; mobile still retracts. We only prevent accidental collapse.
+
 const SearchControl=L.Control.extend({
   options:{position:"topright"},
   onAdd:function(){
-    const div=L.DomUtil.create("div","leaflet-control search-control");
+    const wrapper=L.DomUtil.create("div","leaflet-control search-wrapper");
+    const div=L.DomUtil.create("div","leaflet-control search-control",wrapper);
+
     const btn=L.DomUtil.create("button","search-icon-btn",div);
     btn.type="button"; btn.title="Search";
     btn.innerHTML=`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>`;
+
     const input=L.DomUtil.create("input","search-input",div);
-    input.type="text"; input.placeholder="search here";
+    input.type="text"; input.placeholder="search here"; input.setAttribute("enterkeyhint","search");
+
+    const cancel=L.DomUtil.create("button","search-cancel",div);
+    cancel.type="button"; cancel.textContent="Cancel"; // becomes visible only when expanded on mobile
+
     const sugg=L.DomUtil.create("div","search-suggestions",div);
 
-    L.DomEvent.disableClickPropagation(div); L.DomEvent.disableScrollPropagation(div);
+    L.DomEvent.disableClickPropagation(wrapper);
+    L.DomEvent.disableScrollPropagation(wrapper);
 
-    function expand(){ div.classList.add("expanded"); input.focus(); renderSuggestions(input.value); }
-    function collapseAndReset(){ input.value=""; sugg.innerHTML=""; div.classList.remove("expanded"); clearRouteHighlights(); if(pinnedPopup){pinnedPopup.closePopup(); pinnedPopup=null;} }
+    // start collapsed on both desktop and mobile
+    div.classList.remove("expanded");
 
-    btn.addEventListener("click",()=>{ if(div.classList.contains("expanded")) collapseAndReset(); else expand(); });
+    function expand(){
+      div.classList.add("expanded");
+      input.focus({ preventScroll:true });
+      renderSuggestions(input.value);
+    }
+    function collapse(){
+      div.classList.remove("expanded");
+      input.value=""; sugg.innerHTML=""; clearRouteHighlights();
+      if(pinnedPopup){ pinnedPopup.closePopup(); pinnedPopup=null; }
+    }
 
+    btn.addEventListener("click", ()=> {
+      if(div.classList.contains("expanded")) collapse();
+      else expand();
+    });
+    cancel.addEventListener("click", ()=> collapse());
+
+    // Prevent blur from collapsing on mobile. We only collapse by Cancel, Esc, outside tap with delay, or after committing a result.
+    let blurTimer=null;
+    input.addEventListener("blur", ()=>{
+      if(!div.classList.contains("expanded")) return;
+      // small grace period to allow tapping suggestions
+      blurTimer=setTimeout(()=>{ if(div.classList.contains("expanded")) collapse(); }, 250);
+    });
+    input.addEventListener("focus", ()=> { if(blurTimer){ clearTimeout(blurTimer); blurTimer=null; } });
+
+    // Suggestions
     let debounceId=null;
-    input.addEventListener("input",()=>{ if(debounceId) clearTimeout(debounceId); debounceId=setTimeout(()=>renderSuggestions(input.value),180); });
+    input.addEventListener("input",()=>{
+      if(debounceId) clearTimeout(debounceId);
+      debounceId=setTimeout(()=>renderSuggestions(input.value),140);
+    });
 
     input.addEventListener("keydown",e=>{
       if(e.key==="Enter"){
         e.preventDefault();
         const res=resolveQueryToMarkers(input.value);
-        if(res.type==="fleet"){ const m=res.exemplar; const ll=m.getLatLng(); map.setView(ll,Math.max(map.getZoom(),14)); if(pinnedPopup&&pinnedPopup!==m) pinnedPopup.closePopup(); pinnedPopup=m; m.openPopup(); clearRouteHighlights(); }
-        else if(res.type==="route"){ highlightMarkers(res.markers); res.exemplar?.openPopup(); }
-        else clearRouteHighlights();
-      }else if(e.key==="Escape"){ e.preventDefault(); collapseAndReset(); }
+        if(res.type==="fleet"){
+          const m=res.exemplar; const ll=m.getLatLng();
+          map.setView(ll,Math.max(map.getZoom(),14));
+          if(pinnedPopup&&pinnedPopup!==m) pinnedPopup.closePopup();
+          pinnedPopup=m; m.openPopup(); clearRouteHighlights();
+        }else if(res.type==="route"){
+          highlightMarkers(res.markers); res.exemplar?.openPopup();
+        }else{
+          clearRouteHighlights();
+        }
+        collapse();
+      }else if(e.key==="Escape"){
+        e.preventDefault(); collapse();
+      }
     });
 
-    document.addEventListener("mousedown",onDocDown);
-    function onDocDown(ev){ if(div.classList.contains("expanded") && !div.contains(ev.target)) collapseAndReset(); }
+    // Desktop only: outside click collapses immediately. Mobile: allow a short delay so taps choose items.
+    function onDocDown(ev){
+      if(!div.classList.contains("expanded")) return;
+      if(!wrapper.contains(ev.target)){
+        if(isMobileScreen()){
+          setTimeout(()=>{ if(!wrapper.contains(document.activeElement)) collapse(); },120);
+        }else{
+          collapse();
+        }
+      }
+    }
+    document.addEventListener("mousedown",onDocDown,{passive:true});
+    document.addEventListener("touchstart",onDocDown,{passive:true});
 
     function renderSuggestions(raw){
-      const q=(raw||"").trim(); if(!div.classList.contains("expanded")) return; if(!q){sugg.innerHTML=""; return;}
+      const q=(raw||"").trim();
+      if(!div.classList.contains("expanded")) return;
+      if(!q){ sugg.innerHTML=""; sugg.style.display="none"; return; }
+      sugg.style.display="block";
       const qNorm=q.replace(/\s+/g,"").toUpperCase();
-      const fleets=[], routes=[];
-      for(const [label,marker] of vehicleIndexByFleet.entries()){ if(label.startsWith(qNorm)){fleets.push({kind:"fleet",label}); if(fleets.length>=6) break;} }
-      for(const [rk,set] of routeIndex.entries()){ if(rk.startsWith(qNorm)){routes.push({kind:"route",rk,count:set.size}); if(routes.length>=6) break;} }
+
+      const fleets=[], routesList=[];
+      for(const [label] of vehicleIndexByFleet.entries()){
+        if(label.startsWith(qNorm)){ fleets.push({label}); if(fleets.length>=8) break; }
+      }
+      for(const [rk,set] of routeIndex.entries()){
+        if(rk.startsWith(qNorm)){ routesList.push({rk,count:set.size}); if(routesList.length>=8) break; }
+      }
 
       const html=[];
-      if(fleets.length){ html.push(`<div class="suggestion-section">Fleets</div>`); fleets.forEach(it=>html.push(`<div class="suggestion-item" data-kind="fleet" data-id="${it.label}"><span>${it.label}</span><span class="suggestion-meta">vehicle</span></div>`)); }
-      if(routes.length){ html.push(`<div class="suggestion-section">Routes</div>`); routes.forEach(it=>html.push(`<div class="suggestion-item" data-kind="route" data-id="${it.rk}"><span>${it.rk}</span><span class="suggestion-meta">${it.count} vehicle${it.count===1?"":"s"}</span></div>`)); }
-      sugg.innerHTML=html.join("")||"";
+      if(fleets.length){
+        html.push(`<div class="suggestion-section">Fleets</div>`);
+        fleets.forEach(it=>html.push(`<div class="suggestion-item" data-kind="fleet" data-id="${it.label}"><span>${it.label}</span><span class="suggestion-meta">vehicle</span></div>`));
+      }
+      if(routesList.length){
+        html.push(`<div class="suggestion-section">Routes</div>`);
+        routesList.forEach(it=>html.push(`<div class="suggestion-item" data-kind="route" data-id="${it.rk}"><span>${it.rk}</span><span class="suggestion-meta">${it.count} vehicle${it.count===1?"":"s"}</span></div>`));
+      }
+      sugg.innerHTML=html.join("");
 
       sugg.querySelectorAll(".suggestion-item").forEach(el=>{
-        el.addEventListener("mousedown",ev=>{
-          ev.preventDefault();
-          const kind=el.getAttribute("data-kind"), id=el.getAttribute("data-id");
-          if(kind==="fleet"){ const m=vehicleIndexByFleet.get(id); if(m){ const ll=m.getLatLng(); map.setView(ll,Math.max(map.getZoom(),14)); if(pinnedPopup&&pinnedPopup!==m) pinnedPopup.closePopup(); pinnedPopup=m; m.openPopup(); clearRouteHighlights(); input.value=id; } }
-          if(kind==="route"){ const set=routeIndex.get(id); if(set&&set.size){ const list=[...set]; highlightMarkers(list); list[0].openPopup(); input.value=id; } }
-        });
+        el.addEventListener("pointerdown",(ev)=>{
+          ev.preventDefault(); // stop input blur collapsing first
+          const kind=el.getAttribute("data-kind");
+          const id=el.getAttribute("data-id");
+          if(kind==="fleet"){
+            const m=vehicleIndexByFleet.get(id);
+            if(m){ const ll=m.getLatLng(); map.setView(ll,Math.max(map.getZoom(),14)); if(pinnedPopup&&pinnedPopup!==m) pinnedPopup.closePopup(); pinnedPopup=m; m.openPopup(); clearRouteHighlights(); }
+          }else if(kind==="route"){
+            const set=routeIndex.get(id);
+            if(set&&set.size){ const list=[...set]; highlightMarkers(list); list[0].openPopup(); }
+          }
+          collapse();
+        },{passive:false});
       });
     }
-    this._collapseAndReset=collapseAndReset; this._docHandler=onDocDown;
-    return div;
+
+    this._cleanup=()=>{ document.removeEventListener("mousedown",onDocDown); document.removeEventListener("touchstart",onDocDown); };
+    return wrapper;
   },
-  onRemove:function(){ document.removeEventListener("mousedown",this._docHandler); if(typeof this._collapseAndReset==="function") this._collapseAndReset(); }
+  onRemove:function(){ try{ this._cleanup?.(); }catch{} }
 });
 map.addControl(new SearchControl());
 
@@ -302,9 +338,10 @@ function renderFromCache(c){
   updateVehicleCount();
 }
 
-// --- Fetch vehicles ---
+// --- Rate limit backoff ---
 function applyRateLimitBackoff(retryAfterMs,who){const retry=Math.max(retryAfterMs||0,BACKOFF_START_MS); backoffMs=backoffMs?Math.min(BACKOFF_MAX_MS,Math.max(backoffMs*2,retry)):retry; backoffUntilTs=Date.now()+backoffMs; setDebug(`Rate limited by ${who}. Backing off for ${(backoffMs/1000).toFixed(0)} s`);}
 
+// --- Fetch vehicles ---
 async function fetchVehicles(){
   if(!pageVisible||vehiclesInFlight||(backoffUntilTs && Date.now()<backoffUntilTs)) return;
   vehiclesInFlight=true;
@@ -389,6 +426,7 @@ async function fetchVehicles(){
   }finally{ vehiclesInFlight=false; }
 }
 
+// --- Scheduler ---
 function scheduleNextFetch(){
   if(pollTimeoutId){ clearTimeout(pollTimeoutId); pollTimeoutId=null; }
   if(!pageVisible) return;
@@ -411,7 +449,7 @@ async function init(){
 
   const cached=localStorage.getItem("realtimeSnapshot"); if(cached){ try{ renderFromCache(JSON.parse(cached)); }catch{} }
 
-  // Wire external #filters checkboxes
+  // HTML checkboxes wire-up
   document.querySelectorAll('#filters input[type="checkbox"]').forEach(cb=>{
     cb.addEventListener("change",e=>{
       const layer=e.target.getAttribute("data-layer");
