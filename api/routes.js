@@ -4,70 +4,77 @@ export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET,OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-  if (req.method === "OPTIONS") return res.status(200).end();
+  if (req.method === "OPTIONS") return res.status(204).end();
 
   const UPSTREAM_URL = "https://api.at.govt.nz/gtfs/v3/routes";
-  const REFRESH_MS = 10 * 60 * 1000;        // refresh every 10 minutes
-  const STALE_FALLBACK_MAX_MS = 24 * 60 * 60 * 1000; // serve stale up to 1 day
+  const TTL_MS = 10 * 60 * 1000; // 10 minutes
+  const STALE_FALLBACK_MS = 60 * 60 * 1000; // 1 hour
 
   const now = Date.now();
-  globalThis.__AT_ROUTES__ ||= { data: null, ts: 0 };
-  const cache = globalThis.__AT_ROUTES__;
+  globalThis.__AT_ROUTES_CACHE__ ||= { data: null, ts: 0, etag: null };
+  globalThis.__AT_ROUTES_PENDING__ ||= null;
 
-  // fresh cache
-  if (cache.data && now - cache.ts < REFRESH_MS) {
-    setSWRHeaders(res, REFRESH_MS, 600); // small CDN window, long SWR
-    res.setHeader("x-cache", "routes-hit");
+  const cache = globalThis.__AT_ROUTES_CACHE__;
+
+  // Fresh enough? serve cache
+  if (cache.data && now - cache.ts < TTL_MS) {
+    setSWRHeaders(res, TTL_MS);
+    res.setHeader("x-cache", "hit");
     return res.status(200).json(cache.data);
   }
 
   try {
-    const r = await fetch(UPSTREAM_URL, {
-      headers: { "Ocp-Apim-Subscription-Key": process.env.AT_API_KEY },
-      cache: "no-store"
-    });
+    if (!globalThis.__AT_ROUTES_PENDING__) {
+      globalThis.__AT_ROUTES_PENDING__ = (async () => {
+        const r = await fetch(UPSTREAM_URL, {
+          headers: { "Ocp-Apim-Subscription-Key": process.env.AT_API_KEY },
+          cache: "no-store",
+        });
 
-    if (r.status === 403 || r.status === 429) {
-      const body = await safeBody(r);
-      if (cache.data && now - cache.ts <= STALE_FALLBACK_MAX_MS) {
-        setSWRHeaders(res, REFRESH_MS, 600);
-        res.setHeader("x-cache", "routes-stale-hit");
-        res.setHeader("x-upstream-status", String(r.status));
-        return res.status(200).json(cache.data);
-      }
-      return res.status(502).json({ error: `Upstream error: ${r.status}`, body });
+        if (r.status === 403 || r.status === 429) {
+          const body = await safeBody(r);
+          const err = new Error(`Upstream error: ${r.status}`);
+          err.status = r.status; err.body = body;
+          throw err;
+        }
+        if (!r.ok) {
+          const body = await safeBody(r);
+          const err = new Error(`Upstream error: ${r.status}`);
+          err.status = r.status; err.body = body;
+          throw err;
+        }
+
+        const data = await r.json();
+        cache.data = data;
+        cache.ts = Date.now();
+        cache.etag = `"routes-${cache.ts}-${JSON.stringify(data).length}"`;
+        return cache;
+      })().finally(() => { globalThis.__AT_ROUTES_PENDING__ = null; });
     }
 
-    if (!r.ok) {
-      const body = await safeBody(r);
-      if (cache.data && now - cache.ts <= STALE_FALLBACK_MAX_MS) {
-        setSWRHeaders(res, REFRESH_MS, 600);
-        res.setHeader("x-cache", "routes-stale-hit");
-        res.setHeader("x-upstream-status", String(r.status));
-        return res.status(200).json(cache.data);
+    const fresh = await globalThis.__AT_ROUTES_PENDING__;
+    setSWRHeaders(res, TTL_MS);
+    res.setHeader("x-cache", "miss");
+    res.setHeader("ETag", fresh.etag || "");
+    return res.status(200).json(fresh.data);
+  } catch (e) {
+    if (cache.data && now - cache.ts <= STALE_FALLBACK_MS) {
+      setSWRHeaders(res, TTL_MS);
+      res.setHeader("x-cache", "stale-hit");
+      if (e?.status) {
+        res.setHeader("x-upstream-status", String(e.status));
+        if (e.body) res.setHeader("x-upstream-body", truncate(e.body, 160));
       }
-      return res.status(502).json({ error: `Upstream error: ${r.status}`, body });
-    }
-
-    const data = await r.json();           // pass through as-is
-    cache.data = data;
-    cache.ts = now;
-
-    setSWRHeaders(res, REFRESH_MS, 600);
-    res.setHeader("x-cache", "routes-miss");
-    return res.status(200).json(data);
-  } catch (err) {
-    if (cache.data && now - cache.ts <= STALE_FALLBACK_MAX_MS) {
-      setSWRHeaders(res, REFRESH_MS, 600);
-      res.setHeader("x-cache", "routes-stale-hit");
       return res.status(200).json(cache.data);
     }
-    return res.status(500).json({ error: `Proxy error: ${err.message}` });
+    const status = e?.status ? 502 : 500;
+    return res.status(status).json({ error: e?.message || "Proxy error", body: e?.body || "" });
   }
 }
 
-function setSWRHeaders(res, refreshMs, swrSeconds) {
-  const sMaxAge = Math.max(1, Math.floor(refreshMs / 1000));
-  res.setHeader("Cache-Control", `s-maxage=${sMaxAge}, stale-while-revalidate=${swrSeconds}`);
+function setSWRHeaders(res, ttlMs) {
+  const sMax = Math.max(1, Math.floor(ttlMs / 1000));
+  res.setHeader("Cache-Control", `public, max-age=0, s-maxage=${sMax}, stale-while-revalidate=300`);
 }
 async function safeBody(r) { try { return await r.text(); } catch { return ""; } }
+function truncate(s, n) { return !s ? "" : s.length > n ? s.slice(0, n) + "…" : s; }
