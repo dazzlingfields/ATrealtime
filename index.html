@@ -6,334 +6,262 @@
   <title>AT Realtime Map</title>
   <link rel="icon" type="image/x-icon" href="train.png">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
-
 <style>
+:root{
+  --panel-bg: rgba(255,255,255,0.82);
+  --panel-border: rgba(60,60,67,0.18);
+  --elev-1: 0 6px 16px rgba(0,0,0,0.12);
+  --elev-2: 0 12px 28px rgba(0,0,0,0.18);
+  --text-strong: #1c1c1e;
+  --text-subtle: #6e6e73;
+  --accent: #0a84ff;
+  --accent-weak: rgba(10,132,255,0.12);
+  --r-xl: 20px;
+  --r-lg: 14px;
+  --r-md: 10px;
+  --gap-1: 6px;
+  --gap-2: 10px;
+  --gap-3: 14px;
+  --gap-4: 16px;
+  --glass-blur: 12px;
+  --panel-backdrop: saturate(180%) blur(var(--glass-blur));
+  --ring: 0 0 0 2px rgba(10,132,255,0.45);
+}
+
+@media (prefers-color-scheme: dark) {
   :root{
-    --panel-bg: rgba(255,255,255,0.82);
-    --panel-border: rgba(60,60,67,0.18);
-    --elev-1: 0 6px 16px rgba(0,0,0,0.12);
-    --elev-2: 0 12px 28px rgba(0,0,0,0.18);
-    --text-strong: #1c1c1e;
-    --text-subtle: #6e6e73;
+    --panel-bg: rgba(28,28,30,0.74);
+    --panel-border: rgba(255,255,255,0.14);
+    --elev-1: 0 8px 20px rgba(0,0,0,0.5);
+    --elev-2: 0 16px 36px rgba(0,0,0,0.6);
+    --text-strong: #f5f5f7;
+    --text-subtle: #a1a1a6;
     --accent: #0a84ff;
-    --accent-weak: rgba(10,132,255,0.12);
-    --r-xl: 20px;
-    --r-lg: 14px;
-    --r-md: 10px;
-    --gap-1: 6px;
-    --gap-2: 10px;
-    --gap-3: 14px;
-    --gap-4: 16px;
-    --glass-blur: 12px;
-    --panel-backdrop: saturate(180%) blur(var(--glass-blur));
-    --ring: 0 0 0 2px rgba(10,132,255,0.45);
+    --accent-weak: rgba(10,132,255,0.18);
+    --ring: 0 0 0 2px rgba(10,132,255,0.55);
   }
+}
 
-  @media (prefers-color-scheme: dark) {
-    :root{
-      --panel-bg: rgba(28,28,30,0.74);
-      --panel-border: rgba(255,255,255,0.14);
-      --elev-1: 0 8px 20px rgba(0,0,0,0.5);
-      --elev-2: 0 16px 36px rgba(0,0,0,0.6);
-      --text-strong: #f5f5f7;
-      --text-subtle: #a1a1a6;
-      --accent: #0a84ff;
-      --accent-weak: rgba(10,132,255,0.18);
-      --ring: 0 0 0 2px rgba(10,132,255,0.55);
-    }
-  }
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}
 
-  @media (prefers-reduced-motion: reduce) {
-    * { animation: none !important; transition: none !important; }
-  }
+html, body {
+  margin: 0; padding: 0; width: 100%;
+  overflow-x: hidden;
+  color: var(--text-strong);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+#map { height: 100vh; width: 100vw; }
 
-  html, body {
-    margin: 0; padding: 0; width: 100%;
-    overflow-x: hidden;
-    color: var(--text-strong);
-    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
-    text-rendering: optimizeLegibility;
-  }
-  #map { height: 100vh; width: 100vw; }
+h4 { margin: 0 0 8px 0; font-weight: 700; letter-spacing: 0.2px; font-size: 17px; }
 
-  h4 { margin: 0 0 8px 0; font-weight: 700; letter-spacing: 0.2px; font-size: 17px; }
+#controls {
+  position: absolute; top: 12px; left: 12px; z-index: 1000;
+  background: var(--panel-bg);
+  backdrop-filter: var(--panel-backdrop);
+  -webkit-backdrop-filter: var(--panel-backdrop);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--r-xl);
+  box-shadow: var(--elev-1);
+  padding: 14px 16px;
+  max-width: 280px;
+  display: grid;
+  gap: var(--gap-3);
+  transition: box-shadow 140ms ease, transform 140ms ease;
+}
+#controls:focus-within { box-shadow: var(--elev-2); transform: translateY(-0.5px); }
 
-  #controls {
-    position: absolute; top: 12px; left: 12px; z-index: 1000;
-    background: var(--panel-bg);
-    backdrop-filter: var(--panel-backdrop);
-    -webkit-backdrop-filter: var(--panel-backdrop);
-    border: 1px solid var(--panel-border);
-    border-radius: var(--r-xl);
-    box-shadow: var(--elev-1);
-    padding: 14px 16px;
-    max-width: 280px;
-    display: grid;
-    gap: var(--gap-3);
-    transition: box-shadow 140ms ease, transform 140ms ease;
-  }
-  #controls:focus-within { box-shadow: var(--elev-2); transform: translateY(-0.5px); }
+.control-group { margin: 0; }
+.control-group h4 { font-size: 18px; margin-bottom: 6px; }
 
-  .control-group { margin: 0; }
-  .control-group h4 { font-size: 18px; margin-bottom: 6px; }
+#filters { display: grid; gap: 8px; }
+#filters label {
+  display: grid; grid-template-columns: 18px 1fr; align-items: center; column-gap: 10px;
+  font-size: 14px; color: var(--text-strong); cursor: pointer; user-select: none;
+  padding: 6px 8px; border-radius: var(--r-md);
+  transition: background-color 120ms ease;
+}
+#filters label:hover { background: var(--accent-weak); }
+#filters input[type="checkbox"] {
+  width: 16px; height: 16px; margin: 0;
+  accent-color: var(--accent);
+}
 
-  #filters { display: grid; gap: 8px; }
-  #filters label {
-    display: grid; grid-template-columns: 18px 1fr; align-items: center; column-gap: 10px;
-    font-size: 14px; color: var(--text-strong); cursor: pointer; user-select: none;
-    padding: 6px 8px; border-radius: var(--r-md);
-    transition: background-color 120ms ease;
-  }
-  #filters label:hover { background: var(--accent-weak); }
-  #filters input[type="checkbox"] {
-    width: 16px; height: 16px; margin: 0;
-    accent-color: var(--accent);
-  }
+#debug, #vehicle-count {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px; color: var(--text-subtle); line-height: 1.35;
+}
 
-  #debug, #vehicle-count {
-    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    font-size: 12px; color: var(--text-subtle); line-height: 1.35;
-  }
+.leaflet-popup-content { font-size: 14px; line-height: 1.28; }
+.leaflet-popup-content-wrapper, .leaflet-popup-tip {
+  background: var(--panel-bg);
+  backdrop-filter: var(--panel-backdrop);
+  -webkit-backdrop-filter: var(--panel-backdrop);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--elev-1);
+}
 
-  .leaflet-popup-content { font-size: 14px; line-height: 1.28; }
-  .leaflet-popup-content-wrapper, .leaflet-popup-tip {
-    background: var(--panel-bg);
-    backdrop-filter: var(--panel-backdrop);
-    -webkit-backdrop-filter: var(--panel-backdrop);
-    border: 1px solid var(--panel-border);
-    border-radius: var(--r-lg);
-    box-shadow: var(--elev-1);
-  }
+/* keep search stack above the panel */
+.leaflet-top.leaflet-right .leaflet-control { z-index: 5000; }
 
-  .leaflet-top.leaflet-right .leaflet-control { z-index: 4400; }
+/* search control base placement */
+.leaflet-control.search-wrapper { margin-top: 10px; margin-right: 10px; }
 
-  .leaflet-control.search-wrapper { margin-top: 10px; margin-right: 10px; }
+.leaflet-control.search-control {
+  position: relative;
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--elev-1);
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px; z-index: 4000;
+  transition: box-shadow 120ms ease, transform 120ms ease;
+}
+.leaflet-control.search-control:focus-within { box-shadow: var(--elev-2); transform: translateY(-0.5px); }
 
-  .leaflet-control.search-control {
-    position: relative;
-    background: var(--panel-bg);
-    border: 1px solid var(--panel-border);
-    border-radius: var(--r-lg);
-    box-shadow: var(--elev-1);
-    display: flex; align-items: center; gap: 8px;
-    padding: 6px; z-index: 4000;
-    transition: box-shadow 120ms ease, transform 120ms ease;
-  }
-  .leaflet-control.search-control:focus-within { box-shadow: var(--elev-2); transform: translateY(-0.5px); }
+.search-icon-btn {
+  width: 30px; height: 30px;
+  border: 1px solid var(--panel-border);
+  border-radius: 9px; background: rgba(255,255,255,0.9);
+  display: inline-flex; align-items: center; justify-content: center; cursor: pointer;
+  transition: transform 80ms ease, box-shadow 120ms ease, background-color 120ms ease;
+}
+@media (prefers-color-scheme: dark) {
+  .search-icon-btn { background: rgba(44,44,46,0.9); }
+}
+.search-icon-btn:active { transform: scale(0.98); }
+.search-icon-btn svg { width: 16px; height: 16px; display: block; }
 
-  .search-icon-btn {
-    width: 30px; height: 30px;
-    border: 1px solid var(--panel-border);
-    border-radius: 9px; background: rgba(255,255,255,0.9);
-    display: inline-flex; align-items: center; justify-content: center; cursor: pointer;
-    transition: transform 80ms ease, box-shadow 120ms ease, background-color 120ms ease;
-  }
-  @media (prefers-color-scheme: dark) {
-    .search-icon-btn { background: rgba(44,44,46,0.9); }
-  }
-  .search-icon-btn:active { transform: scale(0.98); }
-  .search-icon-btn svg { width: 16px; height: 16px; display: block; }
+.search-input {
+  flex: 1 1 auto;
+  max-width: 0; opacity: 0; overflow: hidden;
+  border: 1px solid var(--panel-border);
+  background: rgba(255,255,255,0.9);
+  border-radius: 10px;
+  padding: 8px 10px;
+  font-size: 14px;
+  outline: none;
+  transition: max-width 160ms ease, opacity 140ms ease, box-shadow 120ms ease;
+}
+@media (prefers-color-scheme: dark) {
+  .search-input { background: rgba(44,44,46,0.92); color: var(--text-strong); }
+}
+.search-input::placeholder { color: var(--text-subtle); }
+.search-input:focus-visible { box-shadow: var(--ring); }
+.search-control.expanded .search-input { max-width: 240px; opacity: 1; }
 
-  .search-input {
-    flex: 1 1 auto;
-    max-width: 0; opacity: 0; overflow: hidden;
-    border: 1px solid var(--panel-border);
-    background: rgba(255,255,255,0.9);
-    border-radius: 10px;
-    padding: 8px 10px;
-    font-size: 14px;
-    outline: none;
-    transition: max-width 160ms ease, opacity 140ms ease, box-shadow 120ms ease;
-  }
-  @media (prefers-color-scheme: dark) {
-    .search-input { background: rgba(44,44,46,0.92); color: var(--text-strong); }
-  }
-  .search-input::placeholder { color: var(--text-subtle); }
+.search-cancel {
+  display: none;
+  height: 30px; padding: 0 10px;
+  border-radius: 9px; border: 1px solid var(--panel-border);
+  background: transparent; color: var(--accent);
+  font-size: 14px; cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease, transform 80ms ease;
+}
+.search-cancel:active { transform: scale(0.98); }
+.search-control.expanded .search-cancel { display: inline-flex; align-items: center; }
 
-  .search-input:focus-visible { box-shadow: var(--ring); }
+.search-suggestions {
+  position: absolute; top: calc(100% + 6px); left: 0; right: 0;
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--elev-2);
+  max-height: 260px;
+  overflow: auto;
+  display: none;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  z-index: 4500;
+}
+.search-control.expanded .search-suggestions { display: block; }
 
-  .search-control.expanded .search-input { max-width: 240px; opacity: 1; }
+.suggestion-section {
+  padding: 8px 10px 6px 10px;
+  font-size: 12px; color: var(--text-subtle);
+  position: sticky; top: 0;
+  background: inherit; backdrop-filter: var(--panel-backdrop);
+}
+.suggestion-item {
+  padding: 10px 14px;
+  font-size: 14px; cursor: pointer;
+  display: grid; grid-template-columns: 1fr auto; align-items: center;
+  gap: 10px;
+  transition: background-color 100ms ease;
+}
+.suggestion-item + .suggestion-item { border-top: 1px solid var(--panel-border); }
+.suggestion-item:hover, .suggestion-item:active { background: var(--accent-weak); }
+.suggestion-meta { color: var(--text-subtle); font-size: 12px; }
 
-  .search-cancel {
-    display: none;
-    height: 30px; padding: 0 10px;
-    border-radius: 9px; border: 1px solid var(--panel-border);
-    background: transparent; color: var(--accent);
-    font-size: 14px; cursor: pointer;
-    transition: background-color 120ms ease, color 120ms ease, transform 80ms ease;
-  }
-  .search-cancel:active { transform: scale(0.98); }
-  .search-control.expanded .search-cancel { display: inline-flex; align-items: center; }
+.vehicle-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 8px; border-radius: 999px;
+  background: rgba(0,0,0,0.06);
+  color: var(--text-strong); font-size: 12px; font-weight: 600;
+}
+@media (prefers-color-scheme: dark) {
+  .vehicle-chip { background: rgba(255,255,255,0.08); }
+}
 
-  .search-suggestions {
-    position: absolute; top: calc(100% + 6px); left: 0; right: 0;
-    background: var(--panel-bg);
-    border: 1px solid var(--panel-border);
-    border-radius: var(--r-lg);
-    box-shadow: var(--elev-2);
-    max-height: 260px;
-    overflow: auto;
-    display: none;
-    overscroll-behavior: contain;
-    -webkit-overflow-scrolling: touch;
-    z-index: 4500;
-  }
-  .search-control.expanded .search-suggestions { display: block; }
-
-  .suggestion-section {
-    padding: 8px 10px 6px 10px;
-    font-size: 12px; color: var(--text-subtle);
-    position: sticky; top: 0;
-    background: inherit; backdrop-filter: var(--panel-backdrop);
-  }
-  .suggestion-item {
-    padding: 10px 14px;
-    font-size: 14px; cursor: pointer;
-    display: grid; grid-template-columns: 1fr auto; align-items: center;
-    gap: 10px;
-    transition: background-color 100ms ease;
-  }
-  .suggestion-item + .suggestion-item { border-top: 1px solid var(--panel-border); }
-  .suggestion-item:hover, .suggestion-item:active { background: var(--accent-weak); }
-  .suggestion-meta { color: var(--text-subtle); font-size: 12px; }
-
-  .vehicle-chip {
-    display: inline-flex; align-items: center; gap: 6px;
-    padding: 4px 8px; border-radius: 999px;
-    background: rgba(0,0,0,0.06);
-    color: var(--text-strong); font-size: 12px; font-weight: 600;
-  }
-  @media (prefers-color-scheme: dark) {
-    .vehicle-chip { background: rgba(255,255,255,0.08); }
-  }
-
+/* mobile */
 @media (max-width: 600px) {
-  /* Keep search in the top-right; we move the selector panel to top-left */
-  .leaflet-control.search-wrapper {
-    margin-top: 10px;
+  #controls{
+    top: max(10px, env(safe-area-inset-top));
+    left: max(10px, env(safe-area-inset-left));
+    right: auto; bottom: auto;
+    width: 165px;
+    max-width: none;
+    border-radius: 14px;
+    padding: 9px 10px;
+    gap: 8px;
+    box-shadow: var(--elev-2);
+    transform: translateZ(0);
+    z-index: 1200;
+  }
+  .control-group h4{ font-size: 15px; margin-bottom: 4px; }
+  #filters{ gap: 6px; grid-template-columns: 1fr; }
+  #filters label{ padding: 6px 8px; font-size: 12.5px; column-gap: 8px; border-radius: 10px; }
+  #filters input[type="checkbox"]{ width: 16px; height: 16px; }
+
+  .leaflet-popup-content{ font-size: 12px; }
+
+  .leaflet-control.search-wrapper{
+    margin-top: max(10px, env(safe-area-inset-top));
     margin-right: max(10px, env(safe-area-inset-right));
   }
 
-  /* Vehicle selector panel: top-left and smaller than desktop */
-  #controls {
-    top: max(10px, env(safe-area-inset-top));
-    left: max(10px, env(safe-area-inset-left));
-    right: auto;
-    bottom: auto;
+  .search-icon-btn{ width: 34px; height: 34px; border-radius: 10px; }
+  .search-control.expanded .search-input{
+    max-width: min(64vw, 320px);
+    font-size: 16px; padding: 10px 12px;
+  }
+  .search-cancel{ display: none; height: 34px; padding: 0 12px; font-size: 15px; border-radius: 10px; }
+  .search-control.expanded .search-cancel{ display: inline-flex; align-items: center; justify-content: center; }
 
-    width: 180px;           /* smaller than desktop */
-    max-width: none;
-    border-radius: 14px;    /* tighter corner */
-    padding: 10px 12px;     /* tighter padding */
-    gap: var(--gap-2);
-    box-shadow: var(--elev-2);
-    transform: translateZ(0);
-    z-index: 1200;          /* below search suggestions (4500), above map */
-  }
-
-  .control-group h4 {
-    font-size: 15px;
-    margin-bottom: 4px;
-  }
-
-  #filters {
-    gap: 6px;
-    grid-template-columns: 1fr;
-  }
-
-  #filters label {
-    /* compact rows with larger touch target via padding, not font size */
-    padding: 6px 8px;
-    font-size: 13px;
-    column-gap: 8px;
-    border-radius: 10px;
-  }
-
-  #filters input[type="checkbox"] {
-    width: 18px;
-    height: 18px;
-  }
-
-  /* Popup typography smaller on mobile */
-  .leaflet-popup-content {
-    font-size: 12px;
-  }
-
-  /* Search control sizing remains comfortable on mobile */
-  .search-icon-btn {
-    width: 34px;
-    height: 34px;
-    border-radius: 10px;
-  }
-
-  .search-control.expanded .search-input {
-    max-width: min(82vw, 380px);
-    font-size: 16px;
-    padding: 10px 12px;
-  }
-
-  .search-cancel {
-    display: none;
-    height: 34px;
-    padding: 0 12px;
-    font-size: 15px;
-    border-radius: 10px;
-  }
-  .search-control.expanded .search-cancel {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-  }
-
-  .search-suggestions {
-    max-height: 56vh;
-  }
-
-  /* Meta text compact */
-  #vehicle-count, #debug {
-    font-size: 12px;
-    color: var(--text-subtle);
-    margin-top: 6px;
-    line-height: 1.25;
-  }
-
-  /* Optional divider before the counters to separate from checkboxes */
-  #vehicle-count::before {
-    content: "";
-    display: block;
-    height: 1px;
-    margin: 8px 0;
-    background: var(--panel-border);
-  }
+  #vehicle-count, #debug{ font-size: 12px; color: var(--text-subtle); margin-top: 6px; line-height: 1.25; }
+  #vehicle-count::before{ content:""; display:block; height:1px; margin:8px 0; background: var(--panel-border); }
 }
 
-/* Extra-small phones */
-@media (max-width: 360px) {
-  #controls {
-    width: 165px;
-    padding: 9px 10px;
-    border-radius: 12px;
-  }
-  #filters input[type="checkbox"] {
-    width: 16px;
-    height: 16px;
-  }
-  #filters label {
-    font-size: 12.5px;
-    padding: 6px 7px;
-  }
-  .control-group h4 {
-    font-size: 14px;
-  }
-  .search-control.expanded .search-input {
-    max-width: 76vw;
-  }
+/* extra small */
+@media (max-width: 360px){
+  #controls{ width: 155px; padding: 8px 9px; border-radius: 12px; }
+  #filters input[type="checkbox"]{ width: 16px; height: 16px; }
+  #filters label{ font-size: 12px; padding: 6px 7px; }
+  .control-group h4{ font-size: 14px; }
+  .search-control.expanded .search-input{ max-width: min(60vw, 280px); }
+}
+
+:where(button, [role="button"], input, .search-icon-btn, .search-cancel):focus-visible {
+  outline: none; box-shadow: var(--ring);
 }
 
 </style>
-
+  
 </head>
 <body>
 
@@ -359,6 +287,7 @@
 
 </body>
 </html>
+
 
 
 
