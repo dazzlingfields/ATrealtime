@@ -279,6 +279,39 @@ h4 { margin: 0 0 8px 0; font-weight: 700; letter-spacing: 0.2px; font-size: 17px
     padding-bottom: 10px;
   }
 }
+
+
+@media (max-width: 600px) {
+
+  .leaflet-control.search-control .search-cancel {
+    display: inline-flex !important;
+    align-items: center;
+    justify-content: center;
+    width: 28px;     
+    height: 28px;
+    padding: 0;
+    margin-left: 4px;
+    border-radius: 10px;
+    border: 1px solid var(--panel-border);
+    background: transparent;
+
+    font-size: 0;             
+  }
+  .leaflet-control.search-control .search-cancel::before {
+    content: "✕";
+    font-size: 16px;      
+    line-height: 1;
+    color: var(--text-strong);
+  }
+
+
+  @media (prefers-color-scheme: dark) {
+    .leaflet-control.search-control .search-cancel::before {
+      color: #fff;
+    }
+  }
+}
+
 </style>
 
   
@@ -307,6 +340,7 @@ h4 { margin: 0 0 8px 0; font-weight: 700; letter-spacing: 0.2px; font-size: 17px
 
 </body>
 </html>
+
 
 
 
