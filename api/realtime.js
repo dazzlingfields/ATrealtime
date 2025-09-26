@@ -4,91 +4,100 @@ export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET,OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-  if (req.method === "OPTIONS") return res.status(200).end();
+  if (req.method === "OPTIONS") return res.status(204).end();
 
-  // ---------- tunables ----------
-  const MIN_REFRESH_MS = 5000;           // upstream at most once every 5s
-  const STALE_FALLBACK_MAX_MS = 120000;  // serve stale for up to 2 min on errors
+  // Tunables
+  const TTL_MS = 8000;                 // serve same snapshot for 8s to all clients
+  const STALE_FALLBACK_MAX_MS = 120000; // serve stale up to 2 min on errors
   const UPSTREAM_URL = "https://api.at.govt.nz/realtime/legacy";
 
-  // ---------- in-memory cache (persists on warm lambda) ----------
+  // In-memory cache on warm lambda
   const now = Date.now();
-  globalThis.__AT_CACHE__ ||= { data: null, ts: 0, etag: null, errorTs: 0 };
+  globalThis.__AT_CACHE__ ||= { data: null, ts: 0, etag: null };
+  globalThis.__AT_PENDING__ ||= null; // Promise for an in-flight fetch
   const cache = globalThis.__AT_CACHE__;
 
-  // If we refreshed recently, serve cache immediately
-  if (cache.data && now - cache.ts < MIN_REFRESH_MS) {
-    setSWRHeaders(res, MIN_REFRESH_MS);
+  // Fresh enough? serve cache immediately
+  if (cache.data && now - cache.ts < TTL_MS) {
+    setSWRHeaders(res, TTL_MS);
     res.setHeader("x-cache", "hit");
     return res.status(200).json(cache.data);
   }
 
-  // Try upstream
+  // If a fetch is already running, wait for it (dedupe concurrent hits)
   try {
-    const upstreamRes = await fetch(UPSTREAM_URL, {
-      headers: { "Ocp-Apim-Subscription-Key": process.env.AT_API_KEY },
-      cache: "no-store"
-    });
+    if (!globalThis.__AT_PENDING__) {
+      globalThis.__AT_PENDING__ = (async () => {
+        const upstreamRes = await fetch(UPSTREAM_URL, {
+          headers: { "Ocp-Apim-Subscription-Key": process.env.AT_API_KEY },
+          cache: "no-store",
+        });
 
-    // Quota or rate limiting: serve stale if we have it
-    if (upstreamRes.status === 403 || upstreamRes.status === 429) {
-      const body = await safeBody(upstreamRes);
-      res.setHeader("x-upstream-status", upstreamRes.status.toString());
-      res.setHeader("x-upstream-body", truncate(body, 160));
-      if (cache.data && now - cache.ts <= STALE_FALLBACK_MAX_MS) {
-        setSWRHeaders(res, MIN_REFRESH_MS);
-        res.setHeader("x-cache", "stale-hit");
-        return res.status(200).json(cache.data);
-      }
-      return res
-        .status(502)
-        .json({ error: `Upstream error: ${upstreamRes.status}`, body });
+        // If upstream is rate limited or forbidden by quota, don't nuke cache
+        if (upstreamRes.status === 403 || upstreamRes.status === 429) {
+          const body = await safeBody(upstreamRes);
+          const err = new Error(`Upstream error: ${upstreamRes.status}`);
+          err.status = upstreamRes.status;
+          err.body = body;
+          throw err;
+        }
+
+        if (!upstreamRes.ok) {
+          const body = await safeBody(upstreamRes);
+          const err = new Error(`Upstream error: ${upstreamRes.status}`);
+          err.status = upstreamRes.status;
+          err.body = body;
+          throw err;
+        }
+
+        const data = await upstreamRes.json();
+        cache.data = data;
+        cache.ts = Date.now();
+        cache.etag = `"rt-${cache.ts}-${JSON.stringify(data).length}"`;
+        return cache; // {data, ts, etag}
+      })().finally(() => {
+        // clear the pending promise once it settles
+        globalThis.__AT_PENDING__ = null;
+      });
     }
 
-    if (!upstreamRes.ok) {
-      const body = await safeBody(upstreamRes);
-      res.setHeader("x-upstream-status", upstreamRes.status.toString());
-      res.setHeader("x-upstream-body", truncate(body, 160));
-      if (cache.data && now - cache.ts <= STALE_FALLBACK_MAX_MS) {
-        setSWRHeaders(res, MIN_REFRESH_MS);
-        res.setHeader("x-cache", "stale-hit");
-        return res.status(200).json(cache.data);
-      }
-      return res
-        .status(502)
-        .json({ error: `Upstream error: ${upstreamRes.status}`, body });
-    }
+    // Await the shared fetch (or a finished previous one)
+    const fresh = await globalThis.__AT_PENDING__;
 
-    const data = await upstreamRes.json();
-
-    // Update cache and serve
-    cache.data = data;
-    cache.ts = now;
-    setSWRHeaders(res, MIN_REFRESH_MS);
+    setSWRHeaders(res, TTL_MS);
     res.setHeader("x-cache", "miss");
-    return res.status(200).json(data);
-  } catch (err) {
-    // Network or other failure: serve stale if available
+    res.setHeader("ETag", fresh.etag || "");
+    return res.status(200).json(fresh.data);
+  } catch (e) {
+    // Upstream failed. If we have a recent snapshot, serve it as stale.
     if (cache.data && now - cache.ts <= STALE_FALLBACK_MAX_MS) {
-      setSWRHeaders(res, MIN_REFRESH_MS);
+      setSWRHeaders(res, TTL_MS);
       res.setHeader("x-cache", "stale-hit");
+      if (e?.status) {
+        res.setHeader("x-upstream-status", String(e.status));
+        if (e.body) res.setHeader("x-upstream-body", truncate(e.body, 160));
+      }
       return res.status(200).json(cache.data);
     }
-    return res.status(500).json({ error: `Proxy error: ${err.message}` });
+    // No cache to fall back to
+    const status = e?.status ? 502 : 500;
+    return res.status(status).json({
+      error: e?.message || "Proxy error",
+      body: e?.body || "",
+    });
   }
 }
 
-// cache-control tuned for Vercel CDN: serve cached for a few seconds and revalidate in background
-function setSWRHeaders(res, refreshMs) {
-  const sMaxAge = Math.max(1, Math.floor(refreshMs / 1000));  // e.g. 5
-  res.setHeader("Cache-Control", `s-maxage=${sMaxAge}, stale-while-revalidate=30`);
+// CDN-friendly headers: short s-maxage, allow SWR for a bit
+function setSWRHeaders(res, ttlMs) {
+  const sMaxAge = Math.max(1, Math.floor(ttlMs / 1000));
+  res.setHeader(
+    "Cache-Control",
+    `public, max-age=0, s-maxage=${sMaxAge}, stale-while-revalidate=60`
+  );
 }
 
 async function safeBody(res) {
   try { return await res.text(); } catch { return ""; }
 }
-
-function truncate(s, n) {
-  if (!s) return "";
-  return s.length > n ? s.slice(0, n) + "…" : s;
-}
+function truncate(s, n) { return !s ? "" : s.length > n ? s.slice(0, n) + "…" : s; }
