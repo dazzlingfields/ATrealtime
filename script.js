@@ -71,7 +71,7 @@ function buildPopup(routeName,destination,vehicleLabel,busType,licensePlate,spee
 
 function addOrUpdateMarker(id,lat,lon,popupContent,color,type,tripId,fields={}){
   const isMobile=window.innerWidth<=600;
-  const baseRadius=isMobile?4:5;
+  const baseRadius=isMobile?6:5;
   const popupOpts={maxWidth:isMobile?200:250,className:"vehicle-popup"};
 
   if(vehicleMarkers[id]){
@@ -120,6 +120,7 @@ function clearRouteHighlights(){
 function highlightMarkers(markers){
   clearRouteHighlights();
   const bounds=[];
+  const bump = (window.innerWidth <= 600) ? 2.5 : 2; 
   markers.forEach(m=>{
     try{ if(typeof m.setRadius==="function" && m._baseRadius!=null) m.setRadius(m._baseRadius+2); m.setStyle({weight:3}); m._isRouteHighlighted=true; bounds.push(m.getLatLng()); }catch{}
   });
@@ -519,3 +520,4 @@ async function init(){
   }, initialJitter);
 }
 init();
+
