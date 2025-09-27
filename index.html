@@ -292,6 +292,32 @@ h4 { margin: 0 0 8px 0; font-weight: 700; letter-spacing: 0.2px; font-size: 17px
 :where(button, [role="button"], input, .search-icon-btn, .search-cancel):focus-visible {
   outline: none; box-shadow: var(--ring);
 }
+
+  /* Limit dropdown height on small screens so it cannot cover the left panel */
+@media (max-width: 600px) {
+  .search-control .search-suggestions{
+    /* keep it right-anchored from earlier rules */
+    max-height: min(48vh, 320px);   /* about half the viewport on phones */
+    overscroll-behavior: contain;    /* already set, keep it */
+  }
+}
+
+/* Extra-small phones: tighten further */
+@media (max-width: 360px){
+  .search-control .search-suggestions{
+    max-height: min(44vh, 280px);
+  }
+}
+
+/* Optional: respect bottom safe area on devices with gesture bars */
+@supports (height: env(safe-area-inset-bottom)) {
+  @media (max-width: 600px){
+    .search-control .search-suggestions{
+      padding-bottom: env(safe-area-inset-bottom);
+    }
+  }
+}
+
 </style>
   
 </head>
@@ -319,6 +345,7 @@ h4 { margin: 0 0 8px 0; font-weight: 700; letter-spacing: 0.2px; font-size: 17px
 
 </body>
 </html>
+
 
 
 
