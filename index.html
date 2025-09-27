@@ -59,6 +59,7 @@ html, body {
 
 h4 { margin: 0 0 8px 0; font-weight: 700; letter-spacing: 0.2px; font-size: 17px; }
 
+/* Left controls panel */
 #controls {
   position: absolute; top: 12px; left: 12px; z-index: 1000;
   background: var(--panel-bg);
@@ -96,10 +97,9 @@ h4 { margin: 0 0 8px 0; font-weight: 700; letter-spacing: 0.2px; font-size: 17px
   font-size: 12px; color: var(--text-subtle); line-height: 1.35;
 }
 
-/* Popups: theme-aware text color by default */
+/* Popups */
 .leaflet-popup-content { font-size: 14px; line-height: 1.28; color: var(--text-strong); }
 .leaflet-popup-content b { color: var(--text-strong); }
-
 .leaflet-popup-content-wrapper, .leaflet-popup-tip {
   background: var(--panel-bg);
   backdrop-filter: var(--panel-backdrop);
@@ -109,12 +109,9 @@ h4 { margin: 0 0 8px 0; font-weight: 700; letter-spacing: 0.2px; font-size: 17px
   box-shadow: var(--elev-1);
 }
 
-/* keep search stack above the panel */
+/* Search control stacking and base placement */
 .leaflet-top.leaflet-right .leaflet-control { z-index: 5000; }
-
-/* search control base placement */
 .leaflet-control.search-wrapper { margin-top: 10px; margin-right: 10px; }
-
 .leaflet-control.search-control {
   position: relative;
   background: var(--panel-bg);
@@ -122,7 +119,7 @@ h4 { margin: 0 0 8px 0; font-weight: 700; letter-spacing: 0.2px; font-size: 17px
   border-radius: var(--r-lg);
   box-shadow: var(--elev-1);
   display: flex; align-items: center; gap: 8px;
-  padding: 6px; z-index: 5500; /* higher than #controls */
+  padding: 6px; z-index: 5500;
   transition: box-shadow 120ms ease, transform 120ms ease;
 }
 .leaflet-control.search-control:focus-within { box-shadow: var(--elev-2); transform: translateY(-0.5px); }
@@ -180,7 +177,7 @@ h4 { margin: 0 0 8px 0; font-weight: 700; letter-spacing: 0.2px; font-size: 17px
   display: none;
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
-  z-index: 6500; /* above control */
+  z-index: 6500;
 }
 .search-control.expanded .search-suggestions { display: block; }
 
@@ -211,109 +208,91 @@ h4 { margin: 0 0 8px 0; font-weight: 700; letter-spacing: 0.2px; font-size: 17px
   .vehicle-chip { background: rgba(255,255,255,0.08); }
 }
 
-/* mobile */
+/* Mobile rules */
 @media (max-width: 600px) {
   #controls{
     top: max(10px, env(safe-area-inset-top));
     left: max(10px, env(safe-area-inset-left));
     right: auto; bottom: auto;
-    width: 140px;                 /* smaller */
+    width: 140px;
     max-width: none;
     border-radius: 14px;
-    padding: 8px 9px;             /* tighter */
+    padding: 8px 9px;
     gap: 8px;
     box-shadow: var(--elev-2);
     transform: translateZ(0);
-    z-index: 1200;                /* below search */
+    z-index: 1200;
   }
   .control-group h4{ font-size: 14px; margin-bottom: 4px; }
   #filters{ gap: 6px; grid-template-columns: 1fr; }
   #filters label{ padding: 6px 8px; font-size: 12px; column-gap: 8px; border-radius: 10px; }
   #filters input[type="checkbox"]{ width: 16px; height: 16px; }
 
-  /* Popups slightly larger on phones */
   .leaflet-popup-content{ font-size: 13.5px; line-height: 1.35; }
 
+  /* Ensure separation from notches and edges */
   .leaflet-control.search-wrapper{
     margin-top: max(10px, env(safe-area-inset-top));
     margin-right: max(10px, env(safe-area-inset-right));
   }
 
-  .search-icon-btn{ width: 34px; height: 34px; border-radius: 10px; }
+  /* Tighter cap so the field never approaches the left panel */
   .search-control.expanded .search-input{
-    max-width: min(64vw, 320px);  /* limit width on mobile */
+    max-width: min(56vw, 300px);
     font-size: 16px; padding: 10px 12px;
   }
-  .search-cancel{ display: none; height: 34px; padding: 0 12px; font-size: 15px; border-radius: 10px; }
-  .search-control.expanded .search-cancel{ display: inline-flex; align-items: center; justify-content: center; }
 
-  #vehicle-count, #debug{ font-size: 12px; color: var(--text-subtle); margin-top: 6px; line-height: 1.25; }
-  #vehicle-count::before{ content:""; display:block; height:1px; margin:8px 0; background: var(--panel-border); }
-}
-
-/* extra small */
-@media (max-width: 360px){
-  #controls{ width: 135px; padding: 8px 9px; border-radius: 12px; }
-  #filters input[type="checkbox"]{ width: 16px; height: 16px; }
-  #filters label{ font-size: 12px; padding: 6px 7px; }
-  .control-group h4{ font-size: 13px; }
-  .search-control.expanded .search-input{ max-width: min(60vw, 280px); }
-}
-
-:where(button, [role="button"], input, .search-icon-btn, .search-cancel):focus-visible {
-  outline: none; box-shadow: var(--ring);
-}
-
-/* Hide realtime status + counters on phones */
-@media (max-width: 600px) {
-  #debug,
-  #vehicle-count {
-    display: none !important;
+  /* Right-anchor the suggestion dropdown to keep it away from the left panel */
+  .search-control .search-suggestions{
+    left: auto; right: 0;
+    max-width: min(56vw, 300px);
   }
-  #vehicle-count::before {
-    display: none !important;
-    content: none;
-  }
-  #controls {
-    gap: var(--gap-2);
-    padding-bottom: 10px;
-  }
-}
 
-
-@media (max-width: 600px) {
-
+  /* Compact Cancel button with icon on phones */
   .leaflet-control.search-control .search-cancel {
     display: inline-flex !important;
     align-items: center;
     justify-content: center;
-    width: 28px;     
+    width: 28px;
     height: 28px;
     padding: 0;
     margin-left: 4px;
     border-radius: 10px;
     border: 1px solid var(--panel-border);
     background: transparent;
-
-    font-size: 0;             
+    font-size: 0;
   }
   .leaflet-control.search-control .search-cancel::before {
     content: "✕";
-    font-size: 16px;      
+    font-size: 16px;
     line-height: 1;
     color: var(--text-strong);
   }
-
-
   @media (prefers-color-scheme: dark) {
-    .leaflet-control.search-control .search-cancel::before {
-      color: #fff;
-    }
+    .leaflet-control.search-control .search-cancel::before { color: #fff; }
   }
+
+  #debug, #vehicle-count { display: none !important; }
+  #vehicle-count::before { display: none !important; content: none; }
+
+  #controls { gap: var(--gap-2); padding-bottom: 10px; }
 }
 
-</style>
+/* Extra small phones */
+@media (max-width: 360px){
+  #controls{ width: 135px; padding: 8px 9px; border-radius: 12px; top: calc(12px + 4px); }
+  #filters input[type="checkbox"]{ width: 16px; height: 16px; }
+  #filters label{ font-size: 12px; padding: 6px 7px; }
+  .control-group h4{ font-size: 13px; }
+  .search-control.expanded .search-input{ max-width: min(54vw, 280px); }
+  .search-control .search-suggestions{ max-width: min(54vw, 280px); }
+}
 
+/* Focus ring normalization */
+:where(button, [role="button"], input, .search-icon-btn, .search-cancel):focus-visible {
+  outline: none; box-shadow: var(--ring);
+}
+</style>
   
 </head>
 <body>
@@ -340,6 +319,7 @@ h4 { margin: 0 0 8px 0; font-weight: 700; letter-spacing: 0.2px; font-size: 17px
 
 </body>
 </html>
+
 
 
 
